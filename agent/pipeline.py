@@ -13,6 +13,9 @@ from .research import ResearchAgent
 from .rules import calculate_scoring
 
 
+SECTION1_MAX_CHARS = 55
+
+
 def _slug(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
     return value or "material"
@@ -20,6 +23,14 @@ def _slug(value: str) -> str:
 
 def _issue_date() -> str:
     return datetime.now().strftime("%d%b%y").upper()
+
+
+def _compact_55(value: str) -> str:
+    value = " ".join((value or "").split())
+    if len(value) <= SECTION1_MAX_CHARS:
+        return value
+    shortened = value[: SECTION1_MAX_CHARS - 1].rstrip(" ,;:-")
+    return shortened + "…"
 
 
 def _all_hazard_sources(bundle: ResearchBundle) -> list[EvidenceSource]:
@@ -35,16 +46,17 @@ def _all_hazard_sources(bundle: ResearchBundle) -> list[EvidenceSource]:
 def _source_alias(source: EvidenceSource) -> str:
     raw = f"{source.publisher} {source.title} {source.url}".lower()
     aliases = [
-        (("british national formulary", "bnf.nice.org.uk"), "BNF"),
+        (("british national formulary", "bnf.nice.org.uk", "nice.org.uk"), "BNF/NICE"),
         (("electronic medicines compendium", "medicines.org.uk"), "eMC/SmPC"),
-        (("food and drug administration", "fda.gov"), "FDA"),
+        (("medicines and healthcare products", "mhra", "gov.uk"), "MHRA"),
+        (("british pharmacopoeia",), "British Pharmacopoeia"),
+        (("european pharmacopoeia", "ph. eur", "edqm"), "European Pharmacopoeia"),
         (("european medicines agency", "ema.europa.eu"), "EMA"),
-        (("medicines and healthcare products", "gov.uk/mhra"), "MHRA"),
         (("european chemicals agency", "echa.europa.eu"), "ECHA"),
         (("pubchem", "pubchem.ncbi.nlm.nih.gov"), "PubChem"),
-        (("pubmed", "pubmed.ncbi.nlm.nih.gov"), "PubMed"),
-        (("sciencedirect",), "ScienceDirect"),
-        (("european pharmacopoeia", "ph. eur", "edqm"), "European Pharmacopoeia"),
+        (("pubmed", "pubmed.ncbi.nlm.nih.gov", "pmc.ncbi.nlm.nih.gov"), "PubMed"),
+        (("drugbank",), "DrugBank"),
+        (("food and drug administration", "fda.gov", "dailymed.nlm.nih.gov"), "FDA/DailyMed"),
     ]
     for needles, alias in aliases:
         if any(needle in raw for needle in needles):
@@ -94,12 +106,14 @@ def build_template_values(bundle: ResearchBundle, settings: Settings, refs: dict
     pde = scoring.pde_requirement
     hazard_therapeutic = scoring.hazard_selected == "therapeutic_category_risk"
 
+    # Section 1 is deliberately terse. The material name is the exact user-entered
+    # material name; research context belongs in the evidence, not this box.
     return {
         "assessment_issue_date": _issue_date(),
-        "material_name": bundle.identity.canonical_material_name or bundle.material_input.material_name,
-        "dosage_forms": bundle.material_input.dosage_forms or bundle.identity.dosage_forms,
-        "routes_of_administration": bundle.material_input.routes or bundle.identity.routes_of_administration,
-        "therapeutic_class": bundle.identity.therapeutic_class,
+        "material_name": bundle.material_input.material_name,
+        "dosage_forms": _compact_55(bundle.material_input.dosage_forms or bundle.identity.dosage_forms),
+        "routes_of_administration": _compact_55(bundle.material_input.routes or bundle.identity.routes_of_administration),
+        "therapeutic_class": _compact_55(bundle.identity.therapeutic_class),
         "assessment_performed_by": settings.default_assessment_performed_by,
         "hazard_mutagenicity": checkbox(_selected_hazard(bundle, "mutagenicity_genotoxicity")),
         "hazard_carcinogenicity": checkbox(_selected_hazard(bundle, "carcinogenicity")),
@@ -149,7 +163,7 @@ def _review_summary(bundle: ResearchBundle) -> str:
     if s is None:
         return "Scoring not available."
     lines = [
-        f"Material: {bundle.identity.canonical_material_name}",
+        f"Material: {bundle.material_input.material_name}",
         f"Hazard Score (A): {s.hazard_score_a}",
         f"Potency Score (B): {s.potency_score_b if s.potency_score_b is not None else 'REVIEW REQUIRED'}",
         f"Cleanability Score (C): {s.cleanability_score_c}",

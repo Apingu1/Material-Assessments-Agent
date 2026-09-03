@@ -45,6 +45,7 @@ def check() -> None:
     console.print(f"Model: {settings.openai_model}")
     console.print("OpenAI key: " + ("configured" if settings.openai_api_key else "NOT configured"))
     console.print(f"Evidence capture: {settings.capture_evidence}")
+    console.print("Section 1 display limit: 55 characters per field")
 
 
 @app.command("add")
@@ -128,6 +129,19 @@ def run_queue(
         except Exception as exc:
             queue.update(material_id, "FAILED", None, str(exc))
             console.print(f"[red]{item.material_name} failed:[/red] {exc}")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port"),
+) -> None:
+    """Start the minimalist local web interface."""
+    import uvicorn
+
+    _settings(require_runtime=True)
+    console.print(f"Starting Material Assessment Agent UI on http://{host}:{port}")
+    uvicorn.run("agent.web:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

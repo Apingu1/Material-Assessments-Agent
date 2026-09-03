@@ -19,6 +19,12 @@ class EvidenceStatus(str, Enum):
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
 
+class HazardEvidenceStatus(str, Enum):
+    SUPPORTED = "SUPPORTED"
+    CONFLICTING = "CONFLICTING"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
 class SourceType(str, Enum):
     REGULATORY = "REGULATORY"
     CLINICAL = "CLINICAL"
@@ -38,7 +44,7 @@ class EvidenceSource(StrictModel):
     title: str = Field(description="Exact page/document title")
     publisher: str = Field(description="Publisher or source organisation")
     url: str = Field(description="Exact URL returned by web research")
-    tier: Literal[1, 2, 3, 4, 5]
+    tier: Literal[1, 2, 3]
     source_type: SourceType
     relevant_extract: str = Field(
         description="A short source extract, maximum about 25 words; do not invent wording"
@@ -62,6 +68,7 @@ class IdentityResearch(StrictModel):
 
 class HazardItem(StrictModel):
     conclusion: Conclusion
+    evidence_status: HazardEvidenceStatus
     rationale: str
     sources: list[EvidenceSource]
 
@@ -82,6 +89,8 @@ class PotencyResearch(StrictModel):
     dose_calculation: str
     evidence_status: EvidenceStatus
     review_note: str
+    bnf_nice_checked: bool
+    emc_checked: bool
     sources: list[EvidenceSource]
 
 
@@ -127,9 +136,9 @@ class CleanabilityResearch(StrictModel):
 
 
 class MaterialInput(StrictModel):
-    material_name: str
-    dosage_forms: str = ""
-    routes: str = ""
+    material_name: str = Field(min_length=1, max_length=55)
+    dosage_forms: str = Field(default="", max_length=55)
+    routes: str = Field(default="", max_length=55)
     product_context: str = ""
 
 

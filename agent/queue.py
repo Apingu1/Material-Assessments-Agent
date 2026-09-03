@@ -106,6 +106,10 @@ class MaterialQueue:
             )
             conn.commit()
 
+    def get_row(self, material_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM materials WHERE id=?", (material_id,)).fetchone()
+
     def list_rows(self) -> list[sqlite3.Row]:
         with self.connect() as conn:
-            return list(conn.execute("SELECT * FROM materials ORDER BY id"))
+            return list(conn.execute("SELECT * FROM materials ORDER BY id DESC"))

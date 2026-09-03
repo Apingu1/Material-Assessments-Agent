@@ -3,6 +3,7 @@ from __future__ import annotations
 from .models import (
     CleanabilityResearch,
     Conclusion,
+    HazardEvidenceStatus,
     HazardResearch,
     PhysicalClass,
     PotencyResearch,
@@ -19,6 +20,16 @@ HAZARD_SCORES = {
 }
 
 
+def _hazard_source_urls(hazard: HazardResearch) -> list[str]:
+    items = [
+        hazard.mutagenicity_genotoxicity,
+        hazard.carcinogenicity,
+        hazard.reproductive_developmental_toxicity,
+        hazard.sensitisation_potential,
+    ]
+    return [source.url.lower() for item in items for source in item.sources]
+
+
 def score_hazard(hazard: HazardResearch) -> tuple[int, str, list[str]]:
     flags: list[str] = []
     selected: list[tuple[int, str]] = []
@@ -31,6 +42,28 @@ def score_hazard(hazard: HazardResearch) -> tuple[int, str, list[str]]:
             flags.append(
                 f"Hazard {field_name.replace('_', ' ')} is {item.conclusion.value}; operator review required."
             )
+        if item.evidence_status == HazardEvidenceStatus.CONFLICTING:
+            flags.append(
+                f"Hazard {field_name.replace('_', ' ')} has CONFLICTING evidence; conservative positive scoring is retained where Tier 1 positive evidence was identified."
+            )
+        elif item.evidence_status == HazardEvidenceStatus.INSUFFICIENT:
+            flags.append(
+                f"Hazard {field_name.replace('_', ' ')} has insufficient evidence; operator review required."
+            )
+
+    urls = _hazard_source_urls(hazard)
+    if not any("pubmed.ncbi.nlm.nih.gov" in url or "pmc.ncbi.nlm.nih.gov" in url for url in urls):
+        flags.append(
+            "Evidence-hardening check: no PubMed/PMC hazard source was retained. Confirm the mandatory peer-reviewed hazard search lane was completed."
+        )
+    if not any(
+        token in url
+        for url in urls
+        for token in ("medicines.org.uk", "gov.uk", "mhra", "ema.europa.eu", "echa.europa.eu")
+    ):
+        flags.append(
+            "Evidence-hardening check: no UK/EU regulatory hazard source was retained. Confirm the regulatory hazard search lane was completed."
+        )
 
     if selected:
         score, field_name = max(selected, key=lambda x: x[0])
@@ -41,6 +74,11 @@ def score_hazard(hazard: HazardResearch) -> tuple[int, str, list[str]]:
 
 def score_potency(potency: PotencyResearch) -> tuple[int | None, list[str]]:
     flags: list[str] = []
+    if not potency.bnf_nice_checked:
+        flags.append("BNF/NICE primary dose lane was not successfully checked; operator review required.")
+    if not potency.emc_checked:
+        flags.append("UK eMC/SmPC dose corroboration lane was not successfully checked; operator review required.")
+
     if not potency.dose_available or potency.lowest_typical_daily_dose_mg is None:
         flags.append(
             "Lowest typical daily dose could not be converted to a reliable mg/day value; potency and overall screening score require operator completion."
