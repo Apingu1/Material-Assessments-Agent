@@ -11,6 +11,15 @@ from docx.shared import Inches, Pt
 from .evidence import EvidenceCapture
 
 
+APPENDIX_FONT = "Arial"
+
+
+def _font_run(run, size: int | None = None) -> None:
+    run.font.name = APPENDIX_FONT
+    if size is not None:
+        run.font.size = Pt(size)
+
+
 def append_evidence_dossier(
     filled_form: Path,
     output_path: Path,
@@ -24,14 +33,14 @@ def append_evidence_dossier(
         heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = heading.add_run(f"APPENDIX {capture.appendix_label} - {capture.group} Evidence")
         run.bold = True
-        run.font.size = Pt(14)
+        _font_run(run, 14)
 
         _labelled_paragraph(doc, "Source", capture.source.title)
         _labelled_paragraph(doc, "Publisher", capture.source.publisher)
         _labelled_paragraph(doc, "Source tier", str(capture.source.tier))
         _labelled_paragraph(doc, "URL", capture.source.url)
         _labelled_paragraph(doc, "Relevant finding", capture.source.relevant_extract)
-        _labelled_paragraph(doc, "Agent interpretation", capture.source.interpretation)
+        _labelled_paragraph(doc, "Interpretation", capture.source.interpretation)
         _labelled_paragraph(doc, "Evidence capture", capture.capture_status)
         if capture.capture_note:
             _labelled_paragraph(doc, "Capture note", capture.capture_note)
@@ -45,6 +54,7 @@ def append_evidence_dossier(
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             r = p.add_run("No automated screenshot was available. Review the source URL above.")
             r.italic = True
+            _font_run(r, 10)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(output_path)
@@ -52,8 +62,11 @@ def append_evidence_dossier(
 
 def _labelled_paragraph(doc: Document, label: str, value: str) -> None:
     p = doc.add_paragraph()
-    p.add_run(f"{label}: ").bold = True
-    p.add_run(value or "N/A")
+    label_run = p.add_run(f"{label}: ")
+    label_run.bold = True
+    _font_run(label_run, 10)
+    value_run = p.add_run(value or "N/A")
+    _font_run(value_run, 10)
 
 
 def find_soffice() -> str | None:
