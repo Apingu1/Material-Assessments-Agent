@@ -5,7 +5,7 @@ from PIL import Image
 
 from agent.dossier import _display_source, append_evidence_dossier
 from agent.evidence import EvidenceCapture, _page_matches_source
-from agent.models import EvidenceSource, SourceType
+from agent.models import EvidenceApplicability, EvidenceSource, SourceType
 
 
 def _source():
@@ -17,6 +17,7 @@ def _source():
         source_type=SourceType.PHARMACOPOEIAL,
         relevant_extract="Practically insoluble in water, slightly soluble in ethanol.",
         interpretation="Haloperidol is practically insoluble in water.",
+        applicability=[EvidenceApplicability.CHEMICAL_SPECIES],
     )
 
 

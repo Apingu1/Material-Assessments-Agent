@@ -36,6 +36,14 @@ class SourceType(str, Enum):
     OTHER = "OTHER"
 
 
+class EvidenceApplicability(str, Enum):
+    EXACT_MATERIAL = "EXACT_MATERIAL"
+    CHEMICAL_SPECIES = "CHEMICAL_SPECIES"
+    ACTIVE_MOIETY = "ACTIVE_MOIETY"
+    CLINICAL_FORMULATION = "CLINICAL_FORMULATION"
+    PROCESS_CONTEXT = "PROCESS_CONTEXT"
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -50,7 +58,17 @@ class EvidenceSource(StrictModel):
         description="A short source extract, maximum about 25 words; do not invent wording"
     )
     interpretation: str = Field(
-        description="How the source supports, contradicts, or limits the assessment"
+        description=(
+            "Plain-language interpretation of how the source supports, contradicts, or limits "
+            "the assessment. Do not mention evidence tiers, AI, agents, or research lanes."
+        )
+    )
+    applicability: list[EvidenceApplicability] = Field(
+        description=(
+            "Internal applicability tags identifying whether the source applies to the exact "
+            "controlled material, chemical species, active moiety, clinical formulation, "
+            "or process context."
+        )
     )
 
 
@@ -63,6 +81,41 @@ class IdentityResearch(StrictModel):
     routes_of_administration: str
     therapeutic_class: str
     context_notes: str
+    chemical_identity: str = Field(
+        description=(
+            "Chemical species relevant to physicochemical research, retaining meaningful salt/"
+            "hydrate form but removing presentation and strength."
+        )
+    )
+    active_moiety: str = Field(
+        description=(
+            "Therapeutically active identity used for clinical dose and therapeutic research, "
+            "without strength or starting-material presentation."
+        )
+    )
+    synonyms: list[str] = Field(
+        description="Useful scientific/clinical synonyms and established alternative names."
+    )
+    clinical_search_terms: list[str] = Field(
+        description=(
+            "Broad clinical formulations/search terms appropriate to the stated route, not "
+            "restricted to the Eaststone starting-material strength or presentation."
+        )
+    )
+    physicochemical_search_terms: list[str] = Field(
+        description=(
+            "Search terms for chemical/solubility research based on the actual chemical species."
+        )
+    )
+    process_material_description: str = Field(
+        description=(
+            "Concise description of what physically contacts manufacturing equipment, derived "
+            "from the entered material plus manufacturing context."
+        )
+    )
+    population_basis: Literal[
+        "ADULT_DEFAULT", "PAEDIATRIC", "NEONATAL", "MIXED", "UNSPECIFIED"
+    ]
     sources: list[EvidenceSource]
 
 
@@ -120,7 +173,10 @@ class PhysicalFinding(StrictModel):
     classification: PhysicalClass
     evidence_status: EvidenceStatus
     assessment_basis: str = Field(
-        description="Whether the physical assessment is based on pure API or the material/product actually introduced to manufacture"
+        description=(
+            "Whether the physical assessment is based on pure API or the material/product "
+            "actually introduced to manufacture"
+        )
     )
     rationale: str
     review_note: str
@@ -133,6 +189,12 @@ class CleanabilityResearch(StrictModel):
     decon2: SolubilityFinding
     physical: PhysicalFinding
     overall_notes: str
+
+
+class EvidenceRescueResearch(StrictModel):
+    supports_existing_conclusion: bool
+    review_note: str
+    sources: list[EvidenceSource]
 
 
 class MaterialInput(StrictModel):

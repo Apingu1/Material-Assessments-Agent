@@ -9,13 +9,20 @@ from pydantic import BaseModel
 from .config import Settings
 from .models import (
     CleanabilityResearch,
+    EvidenceRescueResearch,
     HazardResearch,
     IdentityResearch,
     MaterialInput,
     PotencyResearch,
     ResearchBundle,
 )
-from .prompts import cleanability_prompt, hazard_prompt, identity_prompt, potency_prompt
+from .prompts import (
+    cleanability_prompt,
+    evidence_rescue_prompt,
+    hazard_prompt,
+    identity_prompt,
+    potency_prompt,
+)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -51,24 +58,58 @@ class ResearchAgent:
             ) from exc
         return model_cls.model_validate(payload)
 
+    @staticmethod
+    def _chemical_identity(identity: IdentityResearch) -> str:
+        return identity.chemical_identity or identity.canonical_material_name
+
+    @staticmethod
+    def _active_moiety(identity: IdentityResearch) -> str:
+        return identity.active_moiety or identity.chemical_identity or identity.canonical_material_name
+
     def research(self, item: MaterialInput) -> ResearchBundle:
         identity = self._structured_web_research(
             identity_prompt(item.material_name, item.dosage_forms, item.routes, item.product_context),
             IdentityResearch,
             "material_identity",
         )
+        chemical_identity = self._chemical_identity(identity)
+        active_moiety = self._active_moiety(identity)
+
         hazard = self._structured_web_research(
-            hazard_prompt(item.material_name, item.product_context),
+            hazard_prompt(
+                item.material_name,
+                chemical_identity,
+                active_moiety,
+                identity.synonyms,
+                item.product_context,
+            ),
             HazardResearch,
             "hazard_research",
         )
         potency = self._structured_web_research(
-            potency_prompt(item.material_name, item.routes, item.product_context),
+            potency_prompt(
+                item.material_name,
+                active_moiety,
+                identity.synonyms,
+                identity.clinical_search_terms,
+                item.routes or identity.routes_of_administration,
+                item.product_context,
+                identity.population_basis,
+            ),
             PotencyResearch,
             "potency_research",
         )
         cleanability = self._structured_web_research(
-            cleanability_prompt(item.material_name, item.dosage_forms, item.product_context),
+            cleanability_prompt(
+                item.material_name,
+                chemical_identity,
+                active_moiety,
+                identity.synonyms,
+                identity.physicochemical_search_terms,
+                item.dosage_forms or identity.dosage_forms,
+                item.product_context,
+                identity.process_material_description,
+            ),
             CleanabilityResearch,
             "cleanability_research",
         )
@@ -78,4 +119,32 @@ class ResearchAgent:
             hazard=hazard,
             potency=potency,
             cleanability=cleanability,
+        )
+
+    def rescue_evidence(
+        self,
+        *,
+        item: MaterialInput,
+        identity: IdentityResearch,
+        group: str,
+        target_summary: str,
+        existing_urls: list[str],
+    ) -> EvidenceRescueResearch:
+        """Find alternative authoritative evidence when the preferred source cannot be captured."""
+        return self._structured_web_research(
+            evidence_rescue_prompt(
+                group=group,
+                material_name=item.material_name,
+                chemical_identity=self._chemical_identity(identity),
+                active_moiety=self._active_moiety(identity),
+                synonyms=identity.synonyms,
+                clinical_search_terms=identity.clinical_search_terms,
+                physicochemical_search_terms=identity.physicochemical_search_terms,
+                routes=item.routes or identity.routes_of_administration,
+                context=item.product_context,
+                target_summary=target_summary,
+                existing_urls=existing_urls,
+            ),
+            EvidenceRescueResearch,
+            f"evidence_rescue_{group.lower().replace('%', 'pct').replace(' ', '_')}",
         )
