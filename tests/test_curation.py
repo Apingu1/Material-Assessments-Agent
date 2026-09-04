@@ -1,6 +1,7 @@
 from agent.curation import curate_hazard_sources, curate_sources, is_cleaner_only_decon_source
 from agent.models import (
     Conclusion,
+    EvidenceApplicability,
     EvidenceSource,
     HazardEvidenceStatus,
     HazardItem,
@@ -9,7 +10,16 @@ from agent.models import (
 )
 
 
-def source(title, url, tier, extract, interpretation, source_type=SourceType.PEER_REVIEWED, publisher="Test"):
+def source(
+    title,
+    url,
+    tier,
+    extract,
+    interpretation,
+    source_type=SourceType.PEER_REVIEWED,
+    publisher="Test",
+    applicability=None,
+):
     return EvidenceSource(
         title=title,
         publisher=publisher,
@@ -18,6 +28,7 @@ def source(title, url, tier, extract, interpretation, source_type=SourceType.PEE
         source_type=source_type,
         relevant_extract=extract,
         interpretation=interpretation,
+        applicability=applicability or [EvidenceApplicability.CHEMICAL_SPECIES],
     )
 
 
@@ -143,3 +154,28 @@ def test_direct_isopropanol_beats_higher_tier_different_alcohol_for_ipa():
     )
     chosen = curate_sources([bp_ethanol, jp_ipa], group="70% IPA Solubility", limit=1)
     assert chosen == [jp_ipa]
+
+
+def test_endpoint_applicability_prefers_chemical_species_for_solubility():
+    formulation = source(
+        "Finished product page",
+        "https://example.com/product",
+        1,
+        "The tablet is supplied for oral administration.",
+        "Finished product presentation.",
+        SourceType.REGULATORY,
+        "eMC",
+        [EvidenceApplicability.CLINICAL_FORMULATION],
+    )
+    chemical = source(
+        "Levothyroxine sodium monograph",
+        "https://example.com/chemical",
+        1,
+        "Levothyroxine sodium is soluble in water.",
+        "Direct chemical-species solubility evidence.",
+        SourceType.PHARMACOPOEIAL,
+        "British Pharmacopoeia",
+        [EvidenceApplicability.CHEMICAL_SPECIES],
+    )
+    chosen = curate_sources([formulation, chemical], group="Water Solubility", limit=1)
+    assert chosen == [chemical]
