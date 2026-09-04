@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .models import Conclusion, EvidenceSource, HazardEvidenceStatus, HazardResearch, SourceType
+from .models import (
+    Conclusion,
+    EvidenceApplicability,
+    EvidenceSource,
+    HazardEvidenceStatus,
+    HazardResearch,
+    SourceType,
+)
 
 
 _TRACKING_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid"}
@@ -53,12 +60,48 @@ def _base_rank(source: EvidenceSource) -> tuple[int, int, int]:
     return (source.tier, 0 if _is_uk(source) else 1, _SOURCE_TYPE_ORDER.get(source.source_type, 9))
 
 
+def _applicability_rank(source: EvidenceSource, group: str) -> int:
+    tags = set(source.applicability)
+    if group == "Potency":
+        if EvidenceApplicability.ACTIVE_MOIETY in tags or EvidenceApplicability.CLINICAL_FORMULATION in tags:
+            return 0
+        if EvidenceApplicability.EXACT_MATERIAL in tags:
+            return 1
+        return 2
+    if group in {"Water Solubility", "70% IPA Solubility", "2% Decon Solubility"}:
+        if EvidenceApplicability.CHEMICAL_SPECIES in tags:
+            return 0
+        if EvidenceApplicability.ACTIVE_MOIETY in tags:
+            return 1
+        if EvidenceApplicability.EXACT_MATERIAL in tags:
+            return 2
+        return 3
+    if group == "Physical Cleanability":
+        if EvidenceApplicability.PROCESS_CONTEXT in tags:
+            return 0
+        if EvidenceApplicability.EXACT_MATERIAL in tags:
+            return 1
+        return 2
+    return 1
+
+
+def _hazard_applicability_rank(source: EvidenceSource) -> int:
+    tags = set(source.applicability)
+    if EvidenceApplicability.CHEMICAL_SPECIES in tags:
+        return 0
+    if EvidenceApplicability.ACTIVE_MOIETY in tags:
+        return 1
+    if EvidenceApplicability.EXACT_MATERIAL in tags:
+        return 2
+    return 3
+
+
 def _group_directness(source: EvidenceSource, group: str) -> int:
     text = _normalise(f"{source.title} {source.relevant_extract} {source.interpretation}")
     if group == "Potency":
         if "bnf" in text or "nice" in text or "bnf.nice.org.uk" in source.url.lower():
             return 0
-        if "smPC".lower() in source.title.lower() or "medicines.org.uk" in source.url.lower():
+        if "smpc" in source.title.lower() or "medicines.org.uk" in source.url.lower():
             return 1
         return 2
     if group == "Water Solubility":
@@ -95,7 +138,10 @@ def _dedupe_exact(sources: list[EvidenceSource]) -> list[EvidenceSource]:
 
 
 def _material_token(material_name: str) -> str:
-    excluded = {"tablet", "tablets", "capsule", "capsules", "solution", "suspension", "cream", "ointment", "mg", "ml"}
+    excluded = {
+        "tablet", "tablets", "capsule", "capsules", "solution", "suspension", "cream",
+        "ointment", "powder", "mg", "ml",
+    }
     for token in re.findall(r"[A-Za-z][A-Za-z-]{3,}", material_name.lower()):
         if token not in excluded:
             return token
@@ -109,8 +155,6 @@ def is_cleaner_only_decon_source(source: EvidenceSource, material_name: str) -> 
     if "decon" not in url_title:
         return False
     token = _material_token(material_name)
-    # A cleaner product page/instruction is not material-solubility evidence unless the
-    # actual relevant finding itself discusses the assessed material.
     return bool(token) and token not in extract
 
 
@@ -124,7 +168,13 @@ def curate_sources(
     candidates = _dedupe_exact(sources)
     if group == "2% Decon Solubility":
         candidates = [s for s in candidates if not is_cleaner_only_decon_source(s, material_name)]
-    candidates.sort(key=lambda s: (_group_directness(s, group), *_base_rank(s)))
+    candidates.sort(
+        key=lambda s: (
+            _group_directness(s, group),
+            _applicability_rank(s, group),
+            *_base_rank(s),
+        )
+    )
     return candidates[:limit]
 
 
@@ -153,7 +203,7 @@ def _best_matching(sources: list[EvidenceSource], polarity: str) -> EvidenceSour
     matches = [source for source in sources if _polarity(source) == polarity]
     if not matches:
         return None
-    return sorted(matches, key=_base_rank)[0]
+    return sorted(matches, key=lambda s: (_hazard_applicability_rank(s), *_base_rank(s)))[0]
 
 
 def curate_hazard_sources(hazard: HazardResearch, limit: int = 5) -> list[EvidenceSource]:
@@ -169,7 +219,10 @@ def curate_hazard_sources(hazard: HazardResearch, limit: int = 5) -> list[Eviden
         item = getattr(hazard, field)
         if item.conclusion != Conclusion.YES:
             continue
-        sources = sorted(_dedupe_exact(item.sources), key=_base_rank)
+        sources = sorted(
+            _dedupe_exact(item.sources),
+            key=lambda s: (_hazard_applicability_rank(s), *_base_rank(s)),
+        )
         if not sources:
             continue
 
