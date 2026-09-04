@@ -64,12 +64,11 @@ class EvidenceSource(StrictModel):
         )
     )
     applicability: list[EvidenceApplicability] = Field(
-        default_factory=list,
         description=(
             "Internal applicability tags identifying whether the source applies to the exact "
             "controlled material, chemical species, active moiety, clinical formulation, "
             "or process context."
-        ),
+        )
     )
 
 
@@ -83,46 +82,40 @@ class IdentityResearch(StrictModel):
     therapeutic_class: str
     context_notes: str
     chemical_identity: str = Field(
-        default="",
         description=(
             "Chemical species relevant to physicochemical research, retaining meaningful salt/"
             "hydrate form but removing presentation and strength."
-        ),
+        )
     )
     active_moiety: str = Field(
-        default="",
         description=(
             "Therapeutically active identity used for clinical dose and therapeutic research, "
             "without strength or starting-material presentation."
-        ),
+        )
     )
     synonyms: list[str] = Field(
-        default_factory=list,
-        description="Useful scientific/clinical synonyms and established alternative names.",
+        description="Useful scientific/clinical synonyms and established alternative names."
     )
     clinical_search_terms: list[str] = Field(
-        default_factory=list,
         description=(
             "Broad clinical formulations/search terms appropriate to the stated route, not "
             "restricted to the Eaststone starting-material strength or presentation."
-        ),
+        )
     )
     physicochemical_search_terms: list[str] = Field(
-        default_factory=list,
         description=(
             "Search terms for chemical/solubility research based on the actual chemical species."
-        ),
+        )
     )
     process_material_description: str = Field(
-        default="",
         description=(
             "Concise description of what physically contacts manufacturing equipment, derived "
             "from the entered material plus manufacturing context."
-        ),
+        )
     )
     population_basis: Literal[
         "ADULT_DEFAULT", "PAEDIATRIC", "NEONATAL", "MIXED", "UNSPECIFIED"
-    ] = "ADULT_DEFAULT"
+    ]
     sources: list[EvidenceSource]
 
 
