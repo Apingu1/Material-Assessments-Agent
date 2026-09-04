@@ -227,6 +227,10 @@ class AssessmentPipeline:
         material_dir = self.settings.output_dir / _slug(item.material_name)
         evidence_dir = material_dir / "evidence"
         material_dir.mkdir(parents=True, exist_ok=True)
+        # Curated capture calls capture_source directly, so the evidence directory
+        # must exist before the first source metadata file is written. This is
+        # especially important in a fresh Codespace with no prior outputs tree.
+        evidence_dir.mkdir(parents=True, exist_ok=True)
 
         # Research remains broad in assessment.json. The dossier receives only a curated,
         # verified evidence set, with exact repeated evidence cross-referenced rather than re-appended.
