@@ -16,13 +16,8 @@ from .models import (
     PotencyResearch,
     ResearchBundle,
 )
-from .prompts import (
-    cleanability_prompt,
-    evidence_rescue_prompt,
-    hazard_prompt,
-    identity_prompt,
-    potency_prompt,
-)
+from .prompts import cleanability_prompt, hazard_prompt, identity_prompt, potency_prompt
+from .rescue_prompts import source_family_rescue_prompt
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -121,18 +116,22 @@ class ResearchAgent:
             cleanability=cleanability,
         )
 
-    def rescue_evidence(
+    def rescue_evidence_from_family(
         self,
         *,
         item: MaterialInput,
         identity: IdentityResearch,
+        family: str,
         group: str,
         target_summary: str,
         existing_urls: list[str],
     ) -> EvidenceRescueResearch:
-        """Find alternative authoritative evidence when the preferred source cannot be captured."""
+        """Search one fixed source family in the deterministic rescue waterfall."""
+        safe_family = family.lower().replace("%", "pct").replace(" ", "_")
+        safe_group = group.lower().replace("%", "pct").replace(" ", "_")
         return self._structured_web_research(
-            evidence_rescue_prompt(
+            source_family_rescue_prompt(
+                family=family,
                 group=group,
                 material_name=item.material_name,
                 chemical_identity=self._chemical_identity(identity),
@@ -146,5 +145,5 @@ class ResearchAgent:
                 existing_urls=existing_urls,
             ),
             EvidenceRescueResearch,
-            f"evidence_rescue_{group.lower().replace('%', 'pct').replace(' ', '_')}",
+            f"evidence_rescue_{safe_group}_{safe_family}",
         )
