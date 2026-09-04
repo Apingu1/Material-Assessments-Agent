@@ -153,6 +153,9 @@ def _review_summary(bundle: ResearchBundle) -> str:
         return "Scoring not available."
     lines = [
         f"Material: {bundle.material_input.material_name}",
+        f"Research chemical identity: {bundle.identity.chemical_identity}",
+        f"Research active moiety: {bundle.identity.active_moiety}",
+        f"Population basis for dose: {bundle.identity.population_basis}",
         f"Hazard Score (A): {s.hazard_score_a}",
         f"Potency Score (B): {s.potency_score_b if s.potency_score_b is not None else 'REVIEW REQUIRED'}",
         f"Cleanability Score (C): {s.cleanability_score_c}",
@@ -160,7 +163,7 @@ def _review_summary(bundle: ResearchBundle) -> str:
         f"PDE Requirement: {s.pde_requirement}", "",
     ]
     if not bundle.potency.bnf_nice_checked:
-        lines.append("BNF/NICE: suitable source was not successfully checked/captured; review dose evidence manually if required.")
+        lines.append("BNF/NICE: suitable source was not successfully checked/captured; alternative UK dose evidence may have been used.")
     if s.hard_escalation_reason:
         lines.append(f"Hard escalation: {s.hard_escalation_reason}")
     lines.append("Operator review flags:")
@@ -214,6 +217,47 @@ def _capture_curated_group(
     return group_captures, new_captures
 
 
+def _group_target_summary(bundle: ResearchBundle, group: str) -> str:
+    if group == "Hazard":
+        selected = []
+        for field in (
+            "mutagenicity_genotoxicity",
+            "carcinogenicity",
+            "reproductive_developmental_toxicity",
+            "sensitisation_potential",
+        ):
+            item = getattr(bundle.hazard, field)
+            if item.conclusion == Conclusion.YES:
+                selected.append(f"{field}: {item.rationale}")
+        return "; ".join(selected) or bundle.hazard.overall_notes
+    if group == "Potency":
+        return f"{bundle.potency.dose_statement}; {bundle.potency.dose_calculation}; {bundle.potency.review_note}"
+    if group == "Water Solubility":
+        return f"{bundle.cleanability.water.classification.value}: {bundle.cleanability.water.rationale}"
+    if group == "70% IPA Solubility":
+        return f"{bundle.cleanability.ipa70.classification.value}: {bundle.cleanability.ipa70.rationale}"
+    if group == "2% Decon Solubility":
+        return f"{bundle.cleanability.decon2.classification.value}: {bundle.cleanability.decon2.rationale}"
+    if group == "Physical Cleanability":
+        return f"{bundle.cleanability.physical.classification.value}: {bundle.cleanability.physical.rationale}"
+    return ""
+
+
+def _curate_rescue_sources(
+    sources: list[EvidenceSource],
+    *,
+    group: str,
+    material_name: str,
+    limit: int,
+) -> list[EvidenceSource]:
+    return curate_sources(
+        sources,
+        group=group,
+        limit=limit,
+        material_name=material_name if group == "2% Decon Solubility" else "",
+    )
+
+
 class AssessmentPipeline:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -227,13 +271,8 @@ class AssessmentPipeline:
         material_dir = self.settings.output_dir / _slug(item.material_name)
         evidence_dir = material_dir / "evidence"
         material_dir.mkdir(parents=True, exist_ok=True)
-        # Curated capture calls capture_source directly, so the evidence directory
-        # must exist before the first source metadata file is written. This is
-        # especially important in a fresh Codespace with no prior outputs tree.
         evidence_dir.mkdir(parents=True, exist_ok=True)
 
-        # Research remains broad in assessment.json. The dossier receives only a curated,
-        # verified evidence set, with exact repeated evidence cross-referenced rather than re-appended.
         groups: list[tuple[str, int, list[EvidenceSource], int]] = [
             ("Hazard", 1, curate_hazard_sources(bundle.hazard, limit=5), 5),
             ("Potency", 2, curate_sources(bundle.potency.sources, group="Potency", limit=4), 2),
@@ -256,7 +295,7 @@ class AssessmentPipeline:
         dossier_captures: list[EvidenceCapture] = []
         refs: dict[str, str] = {}
         registry: dict[str, EvidenceCapture] = {}
-        selection_log: dict[str, list[dict[str, str]]] = {}
+        selection_log: dict[str, dict[str, object]] = {}
 
         for group, number, candidates, max_successful in groups:
             group_captures, new_captures = _capture_curated_group(
@@ -268,12 +307,60 @@ class AssessmentPipeline:
                 evidence_dir=evidence_dir,
                 registry=registry,
             )
+            rescue_attempted = False
+            rescue_note = ""
+
+            if not group_captures:
+                rescue_attempted = True
+                rescue = self.researcher.rescue_evidence(
+                    item=item,
+                    identity=bundle.identity,
+                    group=group,
+                    target_summary=_group_target_summary(bundle, group),
+                    existing_urls=[source.url for source in candidates],
+                )
+                rescue_note = rescue.review_note
+                if rescue.supports_existing_conclusion and rescue.sources:
+                    rescue_candidates = _curate_rescue_sources(
+                        rescue.sources,
+                        group=group,
+                        material_name=item.material_name,
+                        limit=max(2, max_successful * 2),
+                    )
+                    rescued_group, rescued_new = _capture_curated_group(
+                        self.evidence,
+                        group=group,
+                        appendix_number=number,
+                        candidates=rescue_candidates,
+                        max_successful=max_successful,
+                        evidence_dir=evidence_dir,
+                        registry=registry,
+                    )
+                    group_captures.extend(rescued_group)
+                    new_captures.extend(rescued_new)
+
+            if not group_captures and bundle.scoring is not None:
+                flag = f"{group}: no verified appendix evidence was captured after targeted evidence rescue."
+                if rescue_note:
+                    flag += f" {rescue_note}"
+                if flag not in bundle.scoring.review_flags:
+                    bundle.scoring.review_flags.append(flag)
+
             dossier_captures.extend(new_captures)
             refs[group] = _short_reference(group_captures)
-            selection_log[group] = [
-                {"appendix": capture.appendix_label, "url": capture.source.url, "source": _source_alias(capture.source)}
-                for capture in group_captures
-            ]
+            selection_log[group] = {
+                "rescue_attempted": rescue_attempted,
+                "rescue_note": rescue_note,
+                "sources": [
+                    {
+                        "appendix": capture.appendix_label,
+                        "url": capture.source.url,
+                        "source": _source_alias(capture.source),
+                        "applicability": [tag.value for tag in capture.source.applicability],
+                    }
+                    for capture in group_captures
+                ],
+            }
 
         (material_dir / "assessment.json").write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
         (material_dir / "REVIEW_SUMMARY.txt").write_text(_review_summary(bundle), encoding="utf-8")
