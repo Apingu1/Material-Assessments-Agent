@@ -6,16 +6,23 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Settings
-from .curation import curate_hazard_sources, curate_sources, evidence_key
+from .curation import (
+    curate_hazard_sources,
+    curate_sources,
+    evidence_key,
+    merge_evidence_sources,
+)
 from .docx_template import checkbox, fill_content_controls
 from .dossier import append_evidence_dossier, convert_docx_to_pdf
 from .evidence import EvidenceCapture, EvidenceCollector
 from .models import Conclusion, EvidenceSource, MaterialInput, ResearchBundle
 from .research import ResearchAgent
 from .rules import calculate_scoring
+from .source_waterfall import rescue_source_families
 
 
 SECTION1_MAX_CHARS = 55
+_SOLUBILITY_GROUPS = {"Water Solubility", "70% IPA Solubility", "2% Decon Solubility", "Solubility"}
 
 
 def _slug(value: str) -> str:
@@ -38,7 +45,8 @@ def _compact_55(value: str) -> str:
 def _source_alias(source: EvidenceSource) -> str:
     raw = f"{source.publisher} {source.title} {source.url}".lower()
     aliases = [
-        (("british national formulary", "bnf.nice.org.uk", "nice.org.uk"), "BNF/NICE"),
+        (("british national formulary", "bnf.nice.org.uk"), "BNF/NICE"),
+        (("nice.org.uk",), "NICE"),
         (("electronic medicines compendium", "medicines.org.uk"), "eMC/SmPC"),
         (("medicines and healthcare products", "mhra", "gov.uk"), "MHRA"),
         (("british pharmacopoeia",), "British Pharmacopoeia"),
@@ -163,7 +171,7 @@ def _review_summary(bundle: ResearchBundle) -> str:
         f"PDE Requirement: {s.pde_requirement}", "",
     ]
     if not bundle.potency.bnf_nice_checked:
-        lines.append("BNF/NICE: suitable source was not successfully checked/captured; alternative UK dose evidence may have been used.")
+        lines.append("BNF/NICE: suitable source was not successfully checked; the canonical UK evidence waterfall was used for appendix support.")
     if s.hard_escalation_reason:
         lines.append(f"Hard escalation: {s.hard_escalation_reason}")
     lines.append("Operator review flags:")
@@ -177,6 +185,14 @@ def _appendix_label(number: int, index: int) -> str:
     return f"{number}{suffix}"
 
 
+def _merge_capture_group(existing_group: str, new_group: str) -> str:
+    if existing_group == new_group:
+        return existing_group
+    if existing_group in _SOLUBILITY_GROUPS and new_group in _SOLUBILITY_GROUPS:
+        return "Solubility"
+    return "Supporting"
+
+
 def _capture_curated_group(
     collector: EvidenceCollector,
     *,
@@ -187,7 +203,7 @@ def _capture_curated_group(
     evidence_dir: Path,
     registry: dict[str, EvidenceCapture],
 ) -> tuple[list[EvidenceCapture], list[EvidenceCapture]]:
-    """Return group references plus only newly-created captures for dossier appending."""
+    """Return group references plus only newly-created source-document captures."""
     group_captures: list[EvidenceCapture] = []
     new_captures: list[EvidenceCapture] = []
     next_index = 1
@@ -196,6 +212,8 @@ def _capture_curated_group(
         key = evidence_key(source)
         if key in registry:
             existing = registry[key]
+            existing.source = merge_evidence_sources(existing.source, source)
+            existing.group = _merge_capture_group(existing.group, group)
             if existing not in group_captures:
                 group_captures.append(existing)
             if len(group_captures) >= max_successful:
@@ -258,6 +276,18 @@ def _curate_rescue_sources(
     )
 
 
+def _unique_captures(captures: list[EvidenceCapture]) -> list[EvidenceCapture]:
+    seen: set[str] = set()
+    result: list[EvidenceCapture] = []
+    for capture in captures:
+        key = evidence_key(capture.source)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(capture)
+    return result
+
+
 class AssessmentPipeline:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -308,19 +338,32 @@ class AssessmentPipeline:
                 registry=registry,
             )
             rescue_attempted = False
-            rescue_note = ""
+            rescue_attempts: list[dict[str, object]] = []
+            attempted_urls = [source.url for source in candidates]
 
             if not group_captures:
                 rescue_attempted = True
-                rescue = self.researcher.rescue_evidence(
-                    item=item,
-                    identity=bundle.identity,
-                    group=group,
-                    target_summary=_group_target_summary(bundle, group),
-                    existing_urls=[source.url for source in candidates],
-                )
-                rescue_note = rescue.review_note
-                if rescue.supports_existing_conclusion and rescue.sources:
+                for family in rescue_source_families(group):
+                    rescue = self.researcher.rescue_evidence_from_family(
+                        item=item,
+                        identity=bundle.identity,
+                        family=family,
+                        group=group,
+                        target_summary=_group_target_summary(bundle, group),
+                        existing_urls=attempted_urls,
+                    )
+                    rescue_attempts.append(
+                        {
+                            "family": family,
+                            "supports_existing_conclusion": rescue.supports_existing_conclusion,
+                            "review_note": rescue.review_note,
+                            "urls": [source.url for source in rescue.sources],
+                        }
+                    )
+                    attempted_urls.extend(source.url for source in rescue.sources)
+                    if not rescue.supports_existing_conclusion or not rescue.sources:
+                        continue
+
                     rescue_candidates = _curate_rescue_sources(
                         rescue.sources,
                         group=group,
@@ -336,13 +379,17 @@ class AssessmentPipeline:
                         evidence_dir=evidence_dir,
                         registry=registry,
                     )
-                    group_captures.extend(rescued_group)
-                    new_captures.extend(rescued_new)
+                    for capture in rescued_group:
+                        if capture not in group_captures:
+                            group_captures.append(capture)
+                    for capture in rescued_new:
+                        if capture not in new_captures:
+                            new_captures.append(capture)
+                    if group_captures:
+                        break
 
             if not group_captures and bundle.scoring is not None:
-                flag = f"{group}: no verified appendix evidence was captured after targeted evidence rescue."
-                if rescue_note:
-                    flag += f" {rescue_note}"
+                flag = f"{group}: no verified appendix evidence was captured after the canonical source waterfall."
                 if flag not in bundle.scoring.review_flags:
                     bundle.scoring.review_flags.append(flag)
 
@@ -350,7 +397,7 @@ class AssessmentPipeline:
             refs[group] = _short_reference(group_captures)
             selection_log[group] = {
                 "rescue_attempted": rescue_attempted,
-                "rescue_note": rescue_note,
+                "rescue_attempts": rescue_attempts,
                 "sources": [
                     {
                         "appendix": capture.appendix_label,
@@ -362,6 +409,7 @@ class AssessmentPipeline:
                 ],
             }
 
+        dossier_captures = _unique_captures(dossier_captures)
         (material_dir / "assessment.json").write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
         (material_dir / "REVIEW_SUMMARY.txt").write_text(_review_summary(bundle), encoding="utf-8")
         (evidence_dir / "APPENDIX_SELECTION.json").write_text(

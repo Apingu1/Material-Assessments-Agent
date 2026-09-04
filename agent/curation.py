@@ -37,7 +37,7 @@ def _normalise(value: str) -> str:
 
 
 def canonical_url(url: str) -> str:
-    """Normalise a URL for source-document/evidence deduplication."""
+    """Normalise a URL so one source document is physically appended only once."""
     try:
         parts = urlsplit(url.strip())
     except ValueError:
@@ -47,8 +47,8 @@ def canonical_url(url: str) -> str:
 
 
 def evidence_key(source: EvidenceSource) -> str:
-    """Same document + same finding can be cross-referenced instead of appended twice."""
-    return f"{canonical_url(source.url)}|{_normalise(source.relevant_extract)}"
+    """Document-level key used for cross-group appendix deduplication."""
+    return canonical_url(source.url)
 
 
 def _is_uk(source: EvidenceSource) -> bool:
@@ -58,6 +58,58 @@ def _is_uk(source: EvidenceSource) -> bool:
 
 def _base_rank(source: EvidenceSource) -> tuple[int, int, int]:
     return (source.tier, 0 if _is_uk(source) else 1, _SOURCE_TYPE_ORDER.get(source.source_type, 9))
+
+
+def _merge_lines(first: str, second: str) -> str:
+    values: list[str] = []
+    seen: set[str] = set()
+    for raw in (first, second):
+        for line in str(raw or "").splitlines():
+            line = " ".join(line.split()).strip()
+            if not line:
+                continue
+            key = _normalise(line)
+            if key in seen:
+                continue
+            seen.add(key)
+            values.append(line)
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return "\n".join(f"• {value.lstrip('• ').strip()}" for value in values)
+
+
+def merge_evidence_sources(primary: EvidenceSource, secondary: EvidenceSource) -> EvidenceSource:
+    """Merge different relevant findings from the same source document without duplicating it."""
+    preferred = min((primary, secondary), key=_base_rank)
+    applicability: list[EvidenceApplicability] = []
+    for tag in [*primary.applicability, *secondary.applicability]:
+        if tag not in applicability:
+            applicability.append(tag)
+    return EvidenceSource(
+        title=preferred.title,
+        publisher=preferred.publisher,
+        url=preferred.url,
+        tier=min(primary.tier, secondary.tier),
+        source_type=preferred.source_type,
+        relevant_extract=_merge_lines(primary.relevant_extract, secondary.relevant_extract),
+        interpretation=_merge_lines(primary.interpretation, secondary.interpretation),
+        applicability=applicability,
+    )
+
+
+def _merge_by_document(sources: list[EvidenceSource]) -> list[EvidenceSource]:
+    merged: dict[str, EvidenceSource] = {}
+    order: list[str] = []
+    for source in sources:
+        key = evidence_key(source)
+        if key not in merged:
+            merged[key] = source
+            order.append(key)
+        else:
+            merged[key] = merge_evidence_sources(merged[key], source)
+    return [merged[key] for key in order]
 
 
 def _applicability_rank(source: EvidenceSource, group: str) -> int:
@@ -126,15 +178,7 @@ def _group_directness(source: EvidenceSource, group: str) -> int:
 
 
 def _dedupe_exact(sources: list[EvidenceSource]) -> list[EvidenceSource]:
-    seen: set[str] = set()
-    result: list[EvidenceSource] = []
-    for source in sources:
-        key = evidence_key(source)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(source)
-    return result
+    return _merge_by_document(sources)
 
 
 def _material_token(material_name: str) -> str:
@@ -237,8 +281,15 @@ def curate_hazard_sources(hazard: HazardResearch, limit: int = 5) -> list[Eviden
             picks = [positive or sources[0]]
 
         for source in picks:
-            if evidence_key(source) not in {evidence_key(existing) for existing in chosen}:
+            key = evidence_key(source)
+            existing_index = next(
+                (index for index, existing in enumerate(chosen) if evidence_key(existing) == key),
+                None,
+            )
+            if existing_index is None:
                 chosen.append(source)
+            else:
+                chosen[existing_index] = merge_evidence_sources(chosen[existing_index], source)
             if len(chosen) >= limit:
                 return chosen
     return chosen[:limit]
