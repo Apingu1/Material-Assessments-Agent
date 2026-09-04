@@ -4,69 +4,86 @@ The agent prepares a draft ES.SOP.272.F01.V02 through the Section 6 PDE requirem
 
 ## Source tiers
 
-### Tier 1 - primary authoritative evidence
+Tier 1 contains the primary authoritative sources used by the research engine: BNF/NICE, UK eMC/SmPC, MHRA, British Pharmacopoeia, European Pharmacopoeia/EDQM, EMA, ECHA, PubChem, PubMed/PMC peer-reviewed literature, FDA/DailyMed and equivalent authoritative regulatory sources.
 
-Prefer UK evidence where equivalent information is available. Tier 1 includes BNF/NICE, UK eMC/SmPC, MHRA, British Pharmacopoeia, European Pharmacopoeia/EDQM, EMA, ECHA, PubChem, PubMed/PMC peer-reviewed literature, FDA/DailyMed and equivalent authoritative regulatory sources.
+Tier 2 contains strong supporting evidence including DrugBank, other recognised national pharmacopoeias/official databases, manufacturer SDS and established manufacturer/supplier technical information.
 
-### Tier 2 - strong supporting evidence
+Tier 3 contains other recognised secondary clinical/chemical references and reputable technical sources and is used only where stronger evidence is unavailable or for useful corroboration.
 
-DrugBank, other recognised national pharmacopoeias/official databases, manufacturer SDS, and established manufacturer/supplier technical information.
+UK sources are preferred where evidence quality and relevance are otherwise equivalent. The tier is an internal research aid and is not printed in the assessment appendices.
 
-### Tier 3 - secondary/supporting evidence
+## Hazard screening
 
-Other recognised secondary clinical/chemical references and reputable technical sources. Use when Tier 1/2 evidence is unavailable or as corroboration.
+Each intrinsic hazard is stored internally as YES, NO, UNKNOWN or CONFLICTING. Silence is not treated as NO. PubMed/PMC is a mandatory Tier 1 hazard-search lane rather than a fallback.
 
-UK preference sits above tier numbering: where two sources answer the same question equally well, prefer the UK source. This does not prohibit international Tier 1 evidence.
+For each hazard the agent actively searches positive and negative evidence across regulatory, official database and peer-reviewed literature lanes. If credible Tier 1 positive evidence conflicts with credible Tier 1 reassuring evidence, the hazard is conservatively selected and the internal evidence status is recorded as CONFLICTING.
 
-## Question-specific priority
+Sensitisation is not selected solely from SmPC hypersensitivity/anaphylaxis adverse-event wording. Explicit sensitiser classification, recognised study evidence, occupational evidence or equivalent toxicological evidence is preferred.
 
-- Daily dose: BNF/NICE is the primary lane; UK eMC/SmPC is mandatory corroboration. Other Tier 1 evidence follows when needed.
-- Hazard/toxicology: research must deliberately cover regulatory evidence, PubChem/ECHA/official toxicology evidence, and PubMed/PMC peer-reviewed literature. PubMed is not a fallback.
-- Solubility: British/European Pharmacopoeia -> PubChem -> MHRA/EMA quality documentation -> PubMed experimental evidence -> DrugBank/other Tier 2 -> manufacturer technical/SDS -> Tier 3.
-- Physical cleanability: prioritise the actual material/product introduced to manufacture, not merely isolated API crystal data.
-
-## Hazard evidence hardening
-
-The hazard search is adversarial rather than confirmatory. For each category the agent searches both positive and negative evidence and uses multiple relevant search terms. For genotoxicity this includes terms such as mutagenicity, mutagenic, genotoxicity, chromosome aberration, micronucleus, DNA damage and Ames.
-
-If credible Tier 1 positive evidence exists and credible Tier 1 negative/reassuring evidence also exists, the hazard is conservatively selected YES for scoring and its evidence status is recorded as CONFLICTING. The rationale must explain both sides and retain both source types. A Tier 1 positive hazard must not be ignored simply because another Tier 1 source is reassuring.
-
-Silence is not treated as NO. UNKNOWN/INSUFFICIENT is used where evidence cannot support a conclusion.
-
-### Sensitisation
-
-Clinical SmPC wording such as hypersensitivity or anaphylaxis is supporting information but does not by itself prove sensitisation potential. A positive sensitisation conclusion should preferably be supported by explicit skin/respiratory sensitiser classification, H317/H334 or equivalent, a recognised sensitisation study, occupational sensitisation evidence, or an explicit regulatory/toxicological description as a sensitiser.
+The research pool may contain several sources, but the dossier is curated: a supported positive hazard normally retains one strongest source; a material conflict may retain the strongest positive source plus the strongest conflicting source. The whole hazard appendix is capped and repetitive corroborating evidence is kept in assessment.json rather than appended.
 
 ## Potency
 
-BNF/NICE is checked first and UK eMC/SmPC is checked as a mandatory corroborating lane. The agent uses the lowest commonly prescribed therapeutic daily dose for the relevant route.
+BNF/NICE is the primary UK daily-dose lane and UK eMC/SmPC is the mandatory corroborating lane. The lowest commonly prescribed therapeutic daily dose is used for the relevant route. Loading, one-off, titration-only and exceptional/specialist-population doses are not automatically selected merely because they are numerically lower.
 
-A numerically lower eMC dose is used only when it represents a genuine routine therapeutic regimen. Loading doses, one-off doses, titration-only values and exceptional/specialist-population regimens are not automatically used merely because they are lower. Material disagreement between BNF/NICE and eMC is surfaced for operator review.
-
-Dose is converted to mg/day only when scientifically supported. Otherwise B and D remain pending rather than being invented.
+If BNF/NICE cannot be successfully checked, the review summary says so and the strongest available UK evidence is used. The appendix normally contains no more than two dose sources.
 
 ## Cleanability
 
-Water, 70% IPA and 2% Decon use scores 1/3/5 for freely soluble, slightly/moderately soluble and practically insoluble/very low solubility. 70% IPA may use ethanol/alcohol evidence only as an identified inference. 2% Decon may use aqueous behaviour as supporting evidence because the solution is aqueous, again marked as inferred.
+Water, 70% IPA and 2% Decon use scores 1/3/5 for freely soluble, slightly/moderately soluble and practically insoluble/very low solubility. Physical cleanability scores crystalline/non-sticky/non-film-forming = 1, caking powder/suspension residue = 3 and oily/sticky/film-forming = 5. The actual introduced material/product context is considered, not only the isolated API.
 
-Physical cleanability scores crystalline/non-sticky/non-film-forming = 1, caking powder/suspension residue = 3 and oily/sticky/film-forming = 5. The real introduced material/product context is considered, including crushed tablets or expected suspension residue.
+### Water
 
-Where a cleanability classification remains unsupported, a provisional intermediate score 3 is used in the draft and explicitly flagged for human review.
+Prefer British/European Pharmacopoeia, then PubChem, regulatory quality data, PubMed/PMC experimental literature and Tier 2 sources. The appendix normally retains one strongest direct source.
+
+### 70% IPA
+
+Prefer direct 70% IPA or isopropanol/2-propanol evidence about the assessed material. Ethanol/alcohol evidence may support a clearly labelled inference. Direct isopropanol evidence may be more relevant than a higher-tier source that only describes a different alcohol.
+
+### 2% Decon
+
+The assessment question is the solubility/behaviour of the assessed material in 2% Decon 90. Decon 90 composition, surfactants, detergent ingredients, dilution instructions, product advertising and cleaning-agent characteristics are not evidence of material solubility and must not be used to justify the score.
+
+The search order is:
+
+1. direct assessed-material-in-Decon evidence;
+2. if unavailable, assessed-material solubility/behaviour in relevant solvents such as water, isopropanol, ethanol, methanol or other documented solvent systems;
+3. a clearly identified inference where the material-solvent evidence supports one;
+4. REVIEW_REQUIRED where the material evidence remains insufficient.
+
+A Decon manufacturer page is excluded from the evidence set unless its relevant finding specifically reports the assessed material's solubility or behaviour in that system.
+
+### Physical cleanability
+
+The real process material is assessed. User-supplied manufacturing context such as tablets being crushed and dispersed into a suspension may form the primary physical-cleanability basis, with product literature used only to corroborate the presentation where appropriate.
 
 ## Overall screening and PDE decision
 
 D = A x B x C. D <=80 = PDE not required; 81-149 = PDE recommended; >=150 = PDE mandatory. Hard rules override thresholds: Genotoxicity/Mutagenicity selected -> PDE mandatory; Carcinogenicity selected with C >=12 -> PDE mandatory.
 
-## Section 1 display rules
+## Evidence curation and packaging
 
-Each populated Section 1 text field is limited to 55 characters. The Material/API Name is exactly the user-entered material name and is never expanded with manufacturing context. Dosage form, route and therapeutic class are kept concise. Manufacturing context remains available to the research engine and evidence record.
+Research remains broad in assessment.json, but the controlled dossier contains only the strongest, decision-relevant evidence that could be automatically verified and captured.
 
-## Evidence packaging
+Typical appendix budgets are:
 
-Evidence is grouped as Appendix 1 Hazard, 2 Potency, 3 Water, 4 70% IPA, 5 2% Decon and 6 Physical Cleanability. Appendix text is Arial and uses the label `Interpretation`, not `Agent interpretation`.
+- Hazard: up to 5 evidence items, normally fewer.
+- Potency: up to 2.
+- Water: 1.
+- 70% IPA: 1.
+- 2% Decon: up to 2 only where needed for a material-solvent inference; existing captured evidence is cross-referenced where identical.
+- Physical cleanability: 1.
 
-PDF evidence is downloaded and the relevant page is located using exact and fuzzy text matching. If the relevant page cannot be located, no arbitrary first page is appended. Web evidence is captured using Chromium/Playwright. Codespaces must install Chromium with Linux dependencies using `playwright install --with-deps chromium`.
+Exact repeated evidence is cross-referenced rather than appended again. Failed, blocked, 403, 404 or irrelevant screenshots are not included in the dossier; technical diagnostics remain in the evidence folder. PubMed capture uses an official NCBI text fallback when the standard webpage blocks automated capture.
 
-Technical Playwright/browser logs are written only to diagnostic files in the evidence folder. They are never inserted into the dossier. The dossier receives a concise capture note only.
+The visible appendix is intentionally simple and human-readable. It contains only:
+
+- Source
+- URL
+- Relevant finding
+- Interpretation
+- Evidence (the verified source screenshot/page)
+
+Publisher, source tier, capture status, capture notes and hosting-site commentary are retained only in machine-readable research metadata where useful and are not printed in the assessment dossier.
 
 Every generated record remains a draft for full operator review.

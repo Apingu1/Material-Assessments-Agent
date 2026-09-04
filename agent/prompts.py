@@ -10,6 +10,9 @@ UK PREFERENCE
 When two sources answer the same question equally well, prefer UK evidence. Prefer BNF/NICE and eMC for UK clinical use/dose; MHRA for UK regulatory evidence; and British/European pharmacopoeial evidence before non-UK pharmacopoeial evidence where equivalent.
 
 Use the best source FOR THE QUESTION, not a universal source order. Do not invent URLs, titles, quotations or findings. Each relevant_extract must be a short extract of about 25 words or fewer. If direct evidence is unavailable, say so and distinguish inference from direct evidence.
+
+RESEARCH VS APPENDIX EVIDENCE
+Research broadly enough to reach a reliable conclusion, but return only the strongest, most decision-relevant sources in each field. Do not return several sources that merely repeat the same point. The full draft should look like a concise human-prepared assessment, not a literature review.
 """
 
 GENERAL = """
@@ -59,10 +62,13 @@ EVIDENCE HARDENING - mandatory search behaviour:
 - PubMed/PMC is Tier 1 and is a mandatory search lane for hazard questions, not a fallback.
 
 CONSERVATIVE CONFLICT RULE:
-- If credible Tier 1 positive evidence exists for a hazard and credible Tier 1 negative/reassuring evidence also exists, set conclusion=YES and evidence_status=CONFLICTING. Explain both sides in the rationale and include both source types.
+- If credible Tier 1 positive evidence exists for a hazard and credible Tier 1 negative/reassuring evidence also exists, set conclusion=YES and evidence_status=CONFLICTING. Explain both sides in the rationale.
 - If positive Tier 1 evidence exists without material contradiction, set conclusion=YES and evidence_status=SUPPORTED.
 - Set conclusion=NO only when the available evidence genuinely supports a negative conclusion and no credible positive Tier 1 evidence was identified after the adversarial search.
 - Use UNKNOWN + INSUFFICIENT when evidence is inadequate.
+
+SOURCE CURATION RULE:
+For each hazard category, return only the strongest evidence required to support the conclusion. For a supported YES conclusion normally return ONE best source. For a materially conflicting conclusion return at most TWO sources: the strongest positive evidence and the strongest genuinely conflicting/reassuring evidence. Do not return several papers or labels that repeat the same conclusion.
 
 SENSITISATION RULE:
 Do not mark sensitisation YES solely because a SmPC lists hypersensitivity or anaphylaxis as a clinical adverse reaction. Positive sensitisation should preferably be supported by an explicit skin/respiratory sensitiser classification (for example H317/H334 or equivalent), a recognised sensitisation study, occupational sensitisation evidence, or explicit regulatory/toxicological description as a sensitiser. Hypersensitivity adverse-event wording may be supporting evidence only.
@@ -91,6 +97,10 @@ DOSE CONFLICT RULE:
 - If the two sources materially disagree and the status cannot be resolved, set evidence_status=REVIEW_REQUIRED and explain both.
 
 Return a numeric mg/day only when conversion is scientifically supported. If a source gives mL/day, %, drops, units, IU or another non-mass unit, convert to mg/day only when a reliable concentration/density/potency relationship is available and show the calculation. Otherwise set dose_available false and flag review.
+
+SOURCE CURATION RULE:
+Return a maximum of TWO sources: BNF/NICE where available, plus the strongest UK eMC/SmPC corroborating source. If BNF/NICE cannot be accessed, state that through bnf_nice_checked=false and use the strongest available UK evidence rather than adding several weaker sources.
+
 Do not research PDE values.
 Return structured data only.
 """
@@ -113,14 +123,24 @@ Field-specific source priorities:
 - Other recognised pharmacopoeias are Tier 2 where British/European evidence is unavailable.
 - Physical cleanability: prioritise evidence describing the actual material/product introduced to manufacture. If tablets are crushed or a suspension residue is expected, evaluate that real process material rather than only the pure API crystal.
 
+SOURCE CURATION RULE:
+Research broadly, but return only the strongest sources needed for the decision. Water should normally return ONE best source. 70% IPA should normally return ONE best direct solvent source, with a second source only if it materially changes or limits the inference. 2% Decon should return only sources about the ASSESSED MATERIAL's behaviour. Physical cleanability should normally return ONE strongest product/process source.
+
 70% IPA rules:
-- Prefer direct 70% IPA or isopropanol evidence.
-- Ethanol/alcohol evidence may support an INFERRED conclusion, but label it INFERRED and explain why.
+- Prefer direct 70% IPA or isopropanol/2-propanol evidence about {material_name}.
+- Ethanol/alcohol evidence about the assessed material may support an INFERRED conclusion, but label it INFERRED and explain why.
 - Consider that 70% IPA contains about 30% water; do not automatically equate ethanol solubility with 70% IPA solubility.
 
-2% Decon rules:
-- Prefer direct evidence if it exists.
-- Direct 2% Decon data is often unavailable. Because the solution is aqueous, water-solubility behaviour may be used as supporting evidence for an INFERRED conclusion. Clearly label the inference.
+2% DECON - MATERIAL SOLUBILITY RULE:
+The question is: how soluble is {material_name} in 2% Decon 90? It is NOT asking what Decon 90 contains or how Decon 90 is diluted.
+- First search specifically for solubility/behaviour of {material_name} in Decon 90 or a 2% Decon cleaning solution.
+- If direct material-in-Decon evidence is unavailable, search for the assessed material's solubility/behaviour in scientifically relevant solvents such as water, isopropanol/2-propanol, ethanol, methanol or other documented solvent systems, and use those MATERIAL properties to make a clearly labelled INFERRED assessment where justified.
+- NEVER use Decon 90 product composition, detergent ingredients, surfactant content, dilution instructions, product advertising or cleaning-agent characteristics as evidence of {material_name}'s solubility.
+- Do not include a Decon manufacturer/supplier webpage as a source unless the relevant finding specifically reports solubility or behaviour of {material_name} in that system.
+- If available material-solvent evidence still does not justify a category, use REVIEW_REQUIRED rather than pretending the cleaner's composition resolves the question.
+
+PHYSICAL CLEANABILITY RULE:
+The user's manufacturing context is admissible evidence for physical cleanability because it describes the real process material. Where tablets are crushed and dispersed into a suspension, the rationale may be based primarily on that process context, with product literature only used to corroborate the dosage form.
 
 When evidence does not justify a category, use REVIEW_REQUIRED rather than inventing a result.
 Do not research PDE values.
