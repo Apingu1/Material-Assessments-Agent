@@ -16,11 +16,15 @@ A later phase can add a local reader for the password-protected toxicologist PDE
 
 See `docs/RESEARCH_METHOD.md` for the hardened evidence tiers and assessment rules.
 
-## Evidence hardening
+## Evidence hardening and curation
 
-The current research method uses three source tiers. UK evidence is preferred where equivalent evidence exists. BNF/NICE and eMC are the primary dose sources. British/European Pharmacopoeia, PubChem and PubMed/PMC are Tier 1. DrugBank is Tier 2.
+The research method uses three internal source tiers. UK evidence is preferred where equivalent evidence exists. BNF/NICE and eMC are the primary dose sources. British/European Pharmacopoeia, PubChem and PubMed/PMC are Tier 1. DrugBank is Tier 2.
 
-Hazard research is deliberately adversarial: the agent searches regulatory evidence, PubChem/ECHA/official toxicology sources and PubMed/PMC literature, and searches both positive and negative evidence. Credible Tier 1 positive hazard evidence is conservatively selected for scoring even when another Tier 1 source is reassuring; the evidence is then labelled conflicting for operator review.
+Hazard research is deliberately adversarial: the agent searches regulatory evidence, PubChem/ECHA/official toxicology sources and PubMed/PMC literature, and searches both positive and negative evidence. Credible Tier 1 positive hazard evidence is conservatively selected for scoring even when another Tier 1 source is reassuring; the evidence is then labelled conflicting internally for operator review.
+
+Research can remain broad, but the generated dossier is deliberately concise. Only the strongest, decision-relevant evidence that was successfully verified and captured is appended. Repetitive corroborating sources remain available in `assessment.json` instead of inflating the controlled dossier.
+
+For 2% Decon, the research question is specifically the assessed material's solubility/behaviour in Decon 90. Decon product composition, surfactants, dilution instructions and cleaner advertising are not admissible evidence of material solubility. If direct material-in-Decon evidence is unavailable, the agent uses documented material behaviour in relevant solvents to support a clearly labelled inference or flags review.
 
 ## Setup
 
@@ -66,14 +70,7 @@ Start the local UI:
 python -m agent.cli serve --port 8000
 ```
 
-In Codespaces, open the forwarded port 8000. The UI provides:
-
-- Material / API input with the 55-character Section 1 limit;
-- dosage form, route and manufacturing context;
-- Add to Queue / Add & Run / Run Pending;
-- CSV import;
-- live queue status;
-- links to generated F01, dossier, PDF, summary and JSON outputs.
+In Codespaces, open the forwarded port 8000. The UI provides material/API input, dosage form, route, manufacturing context, queue controls, CSV import, live status and links to generated files.
 
 Manufacturing context is used by the research engine but is not appended to the Material/API Name field.
 
@@ -108,15 +105,17 @@ Queue statuses include `PENDING`, `RESEARCHING`, `READY_FOR_REVIEW`, `PDE_RECOMM
 Each material receives a folder under `outputs/` containing:
 
 - completed `F01 V02 - DRAFT.docx`;
-- `Assessment Dossier - DRAFT.docx` with the unchanged form followed by evidence appendices;
+- `Assessment Dossier - DRAFT.docx` with the unchanged form followed by curated evidence appendices;
 - optional dossier PDF when LibreOffice is installed;
 - `REVIEW_SUMMARY.txt`;
-- `assessment.json`;
-- an `evidence/` folder with source metadata, source files/screenshots and technical diagnostic logs where needed.
+- `assessment.json` containing the full research pool;
+- an `evidence/` folder containing the selected evidence, source metadata, appendix-selection metadata and technical diagnostics where needed.
 
-Appendix text is Arial. Evidence pages use `Interpretation` rather than `Agent interpretation`. Browser/Playwright diagnostics are never inserted into the dossier.
+The visible appendix is intentionally simple and human-readable. It contains only **Source**, **URL**, **Relevant finding**, **Interpretation** and **Evidence** followed by the verified screenshot/source page. Source tier, publisher, capture status, capture notes and hosting-site commentary are not printed in the dossier.
 
-PDF evidence capture no longer falls back to a random first page: if the relevant evidence page cannot be located by exact/fuzzy matching, the PDF is retained and the dossier states that manual page review is required.
+Appendix text is Arial. Blocked, 403, 404, irrelevant or unverified screenshots are not appended. PubMed uses an official NCBI text fallback when the normal webpage blocks browser capture. PDF evidence is appended only when the relevant page can be located by exact/fuzzy matching; a random first page is never substituted.
+
+Exact repeated evidence is cross-referenced instead of appended twice, and the appendix image is scaled to keep most evidence items on a single page.
 
 ## Tests
 
