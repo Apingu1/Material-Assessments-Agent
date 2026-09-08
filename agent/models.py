@@ -44,6 +44,34 @@ class EvidenceApplicability(str, Enum):
     PROCESS_CONTEXT = "PROCESS_CONTEXT"
 
 
+class COSHHArea(str, Enum):
+    GOODS_IN_WAREHOUSE = "GOODS_IN_WAREHOUSE"
+    SAMPLING = "SAMPLING"
+    QC = "QC"
+    PRODUCTION = "PRODUCTION"
+    R_AND_D = "R_AND_D"
+    HOUSEKEEPING = "HOUSEKEEPING"
+    OFFICE = "OFFICE"
+
+
+class RiskBand(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class GHSCode(str, Enum):
+    GHS01 = "GHS01"
+    GHS02 = "GHS02"
+    GHS03 = "GHS03"
+    GHS04 = "GHS04"
+    GHS05 = "GHS05"
+    GHS06 = "GHS06"
+    GHS07 = "GHS07"
+    GHS08 = "GHS08"
+    GHS09 = "GHS09"
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -197,11 +225,96 @@ class EvidenceRescueResearch(StrictModel):
     sources: list[EvidenceSource]
 
 
+class SDSResearch(StrictModel):
+    substance_name: str
+    cas_number: str
+    synonyms: list[str]
+    manufacturer: str
+    product_name: str
+    product_number: str
+    revision_date: str
+    url: str
+    is_supplier_specific: bool
+    match_status: Literal["MATCHED", "REFERENCE_SDS", "REVIEW_REQUIRED"]
+    match_rationale: str
+    source: EvidenceSource
+
+
+class COSHHResearch(StrictModel):
+    coshh_substance_name: str = Field(
+        description="Base hazardous substance name used on the COSHH, without incoming strength/presentation"
+    )
+    material_use_context: str = Field(
+        description="Exact Eaststone starting material and concise handling/use context"
+    )
+    sds: SDSResearch
+    physical_form: str
+    colour: str
+    odour: str
+    signal_word: Literal["DANGER", "WARNING", "NONE", "UNKNOWN"]
+    pictograms: list[GHSCode]
+    hazard_statements: list[str]
+    precautionary_statements: list[str]
+    inhalation_hazard: bool
+    skin_hazard: bool
+    eye_hazard: bool
+    ingestion_hazard: bool
+    first_aid_inhalation: str
+    first_aid_skin: str
+    first_aid_eye: str
+    first_aid_ingestion: str
+    spill_response: str
+    storage_handling: str
+    firefighting_media: str
+    environmental_precautions: str
+    disposal: str
+    workplace_exposure_limit_found: bool
+    workplace_exposure_limit: str
+    health_surveillance_considered: bool
+    health_surveillance_recommended: bool
+    health_surveillance_rationale: str
+    core_controls: list[str]
+    review_note: str
+    sources: list[EvidenceSource]
+
+
+class COSHHActivityAssessment(StrictModel):
+    area: COSHHArea
+    activity: str
+    exposure_scenario: str
+    controls: list[str]
+    ppe: list[str]
+    initial_risk: RiskBand
+    residual_risk: RiskBand
+    review_required: bool
+    rationale: str
+
+
+class COSHHAssessment(StrictModel):
+    research: COSHHResearch
+    activities: list[COSHHActivityAssessment]
+    review_flags: list[str]
+
+
+_DEFAULT_COSHH_AREAS = [
+    COSHHArea.GOODS_IN_WAREHOUSE,
+    COSHHArea.SAMPLING,
+    COSHHArea.QC,
+    COSHHArea.PRODUCTION,
+]
+
+
 class MaterialInput(StrictModel):
     material_name: str = Field(min_length=1, max_length=55)
     dosage_forms: str = Field(default="", max_length=55)
     routes: str = Field(default="", max_length=55)
     product_context: str = ""
+    coshh_areas: list[COSHHArea] = Field(default_factory=lambda: list(_DEFAULT_COSHH_AREAS))
+    people_exposed: str = "Production, QC, Sampling and Warehouse personnel as applicable"
+    typical_quantity: str = ""
+    existing_controls: str = ""
+    frequency: str = "Infrequent"
+    duration: str = "<30 mins"
 
 
 class ScoringResult(StrictModel):
@@ -227,4 +340,5 @@ class ResearchBundle(StrictModel):
     hazard: HazardResearch
     potency: PotencyResearch
     cleanability: CleanabilityResearch
+    coshh: COSHHResearch | None = None
     scoring: ScoringResult | None = None
