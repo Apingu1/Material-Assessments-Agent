@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 from .models import (
+    COSHHResearch,
     CleanabilityResearch,
     EvidenceRescueResearch,
     HazardResearch,
@@ -16,7 +17,7 @@ from .models import (
     PotencyResearch,
     ResearchBundle,
 )
-from .prompts import cleanability_prompt, hazard_prompt, identity_prompt, potency_prompt
+from .prompts import cleanability_prompt, coshh_prompt, hazard_prompt, identity_prompt, potency_prompt
 from .rescue_prompts import source_family_rescue_prompt
 
 T = TypeVar("T", bound=BaseModel)
@@ -62,6 +63,7 @@ class ResearchAgent:
         return identity.active_moiety or identity.chemical_identity or identity.canonical_material_name
 
     def research(self, item: MaterialInput) -> ResearchBundle:
+        """Run the cleaning-validation research. COSHH is a separate pass so one failure cannot erase the other output."""
         identity = self._structured_web_research(
             identity_prompt(item.material_name, item.dosage_forms, item.routes, item.product_context),
             IdentityResearch,
@@ -114,6 +116,21 @@ class ResearchAgent:
             hazard=hazard,
             potency=potency,
             cleanability=cleanability,
+        )
+
+    def research_coshh(self, item: MaterialInput, identity: IdentityResearch) -> COSHHResearch:
+        """Run the SDS-first COSHH research using the already-resolved material identity."""
+        return self._structured_web_research(
+            coshh_prompt(
+                item.material_name,
+                self._chemical_identity(identity),
+                self._active_moiety(identity),
+                identity.synonyms,
+                identity.process_material_description,
+                item.product_context,
+            ),
+            COSHHResearch,
+            "coshh_research",
         )
 
     def rescue_evidence_from_family(
