@@ -77,6 +77,20 @@ def _page_matches_source(body_text: str, source: EvidenceSource) -> bool:
     return overlap >= 0.58
 
 
+def _bnf_page_matches_source(body_text: str, source: EvidenceSource) -> bool:
+    """BNF often splits dose text across DOM nodes; use a more tolerant token check after navigation."""
+    if _page_matches_source(body_text, source):
+        return True
+    body_words = set(_normalise(body_text).split())
+    quote_words = _keywords(source.relevant_extract)
+    if quote_words and len(quote_words & body_words) / len(quote_words) >= 0.34:
+        return True
+    interpretation_words = _keywords(source.interpretation)
+    if interpretation_words and len(interpretation_words & body_words) / len(interpretation_words) >= 0.42:
+        return True
+    return False
+
+
 def _looks_blocked_or_broken(status: int | None, body_text: str) -> bool:
     if status is not None and status >= 400:
         return True
@@ -86,6 +100,13 @@ def _looks_blocked_or_broken(status: int | None, body_text: str) -> bool:
         "oops we couldn t find the page", "page not found", "404 not found",
     )
     return any(marker in body for marker in blocked_markers)
+
+
+def _is_bnf_url(url: str) -> bool:
+    try:
+        return "bnf.nice.org.uk" in urlparse(url).netloc.lower()
+    except ValueError:
+        return False
 
 
 def _pubmed_fallback_url(url: str) -> str | None:
@@ -178,6 +199,24 @@ class EvidenceCollector:
         except Exception as exc:
             self._write_diagnostic(evidence_dir, stem, source.url, "PDF", exc)
 
+        # BNF/NICE receives a dedicated browser-session attempt before the generic
+        # webpage route. Research and capture remain separate: a BNF capture failure
+        # never invalidates a dose already supported by the research record.
+        if _is_bnf_url(source.url):
+            try:
+                capture_path = self._capture_bnf_html(source, evidence_dir, stem)
+                return EvidenceCapture(
+                    source,
+                    group,
+                    appendix_label,
+                    capture_path,
+                    None,
+                    "CAPTURED",
+                    "Verified BNF/NICE evidence captured with dedicated browser session",
+                )
+            except Exception as exc:
+                self._write_diagnostic(evidence_dir, stem, source.url, "BNF_BROWSER", exc)
+
         try:
             capture_path = self._capture_html(source, evidence_dir, stem)
             return EvidenceCapture(
@@ -213,7 +252,7 @@ class EvidenceCollector:
         parsed = urlparse(source.url)
         if parsed.scheme not in {"http", "https"}:
             return None
-        headers = {"User-Agent": "Mozilla/5.0 MaterialAssessmentAgent/0.3"}
+        headers = {"User-Agent": "Mozilla/5.0 MaterialAssessmentAgent/0.4"}
         with httpx.Client(follow_redirects=True, timeout=25, headers=headers) as client:
             response = client.get(source.url)
             response.raise_for_status()
@@ -311,6 +350,99 @@ class EvidenceCollector:
                     return
             except Exception:
                 continue
+
+    def _accept_nice_cookies(self, page) -> None:
+        selectors = (
+            "button:has-text('Accept all cookies')",
+            "button:has-text('Accept cookies')",
+            "button:has-text('Accept all')",
+            "#onetrust-accept-btn-handler",
+        )
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if locator.count() > 0 and locator.is_visible():
+                    locator.click(timeout=1500)
+                    page.wait_for_timeout(250)
+                    return
+            except Exception:
+                continue
+
+    def _capture_bnf_html(self, source: EvidenceSource, evidence_dir: Path, stem: str) -> Path:
+        """Best-effort BNF capture using a warmed UK browser session and tolerant dose-text matching."""
+        image_path = evidence_dir / f"{stem}-BNF.jpg"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ],
+            )
+            try:
+                context = browser.new_context(
+                    viewport={"width": 1440, "height": 1100},
+                    ignore_https_errors=True,
+                    locale="en-GB",
+                    timezone_id="Europe/London",
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/151.0.0.0 Safari/537.36"
+                    ),
+                    extra_http_headers={
+                        "Accept-Language": "en-GB,en;q=0.9",
+                        "DNT": "1",
+                        "Upgrade-Insecure-Requests": "1",
+                    },
+                )
+                context.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                )
+                page = context.new_page()
+                page.set_default_timeout(self.settings.playwright_timeout_ms)
+
+                # Warm the first-party NICE/BNF session before visiting the deep drug page.
+                try:
+                    page.goto("https://bnf.nice.org.uk/", wait_until="domcontentloaded")
+                    page.wait_for_timeout(600)
+                    self._accept_nice_cookies(page)
+                except Exception:
+                    pass
+
+                response = page.goto(source.url, wait_until="domcontentloaded", referer="https://bnf.nice.org.uk/")
+                page.wait_for_timeout(1000)
+                self._accept_nice_cookies(page)
+                status = response.status if response is not None else None
+                body_text = page.locator("body").inner_text(timeout=self.settings.playwright_timeout_ms)
+                if _looks_blocked_or_broken(status, body_text):
+                    raise EvidenceCaptureError(f"BNF source blocked or broken (HTTP {status or 'unknown'}).")
+                if not _bnf_page_matches_source(body_text, source):
+                    raise EvidenceCaptureError("Relevant BNF dose evidence text was not located on rendered page.")
+
+                self._scroll_to_relevant(page, source)
+                # If dose text is split across nodes, anchor the screenshot around the stable BNF section.
+                for heading in ("Indications and dose", "Dose", "Indications and doses"):
+                    try:
+                        locator = page.get_by_text(heading, exact=False).first
+                        if locator.count() > 0:
+                            locator.scroll_into_view_if_needed()
+                            page.wait_for_timeout(250)
+                            break
+                    except Exception:
+                        continue
+                page.screenshot(path=str(image_path), full_page=False, type="jpeg", quality=88)
+                context.close()
+            finally:
+                browser.close()
+
+        with Image.open(image_path) as image:
+            if image.width > 1800:
+                ratio = 1800 / image.width
+                image = image.resize((1800, int(image.height * ratio)))
+                image.save(image_path, quality=88)
+        return image_path
 
     def _capture_html(self, source: EvidenceSource, evidence_dir: Path, stem: str) -> Path:
         image_path = evidence_dir / f"{stem}.jpg"
