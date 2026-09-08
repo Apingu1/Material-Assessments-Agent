@@ -1,5 +1,5 @@
-material_name,dosage_forms,routes,product_context
-Haloperidol 10 mg Tablets,Suspension,Oral,Tablets are crushed/used as the starting material for suspension manufacture
-Levothyroxine Sodium Powder,Suspension & Solution,Oral,
-(Levo) Menthol,Solutions,Oral,
-Olive Oil,Solution,Oral & Topical,
+material_name,dosage_forms,routes,product_context,coshh_areas,people_exposed,typical_quantity,existing_controls,frequency,duration
+Haloperidol 10 mg Tablets,Suspension,Oral,Tablets are crushed/used as the starting material for suspension manufacture,"GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION","Production, QC, Sampling and Warehouse personnel as applicable",,Dispensing booth / local extraction,Infrequent,<30 mins
+Levothyroxine Sodium Powder,Suspension & Solution,Oral,,"GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION","Production, QC, Sampling and Warehouse personnel as applicable",,,Infrequent,<30 mins
+(Levo) Menthol,Solutions,Oral,"","GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION","Production, QC, Sampling and Warehouse personnel as applicable",,,Infrequent,<30 mins
+Olive Oil,Solution,Oral & Topical,"","GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION","Production, QC, Sampling and Warehouse personnel as applicable",,,Infrequent,<30 mins
