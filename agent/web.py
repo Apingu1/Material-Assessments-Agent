@@ -35,15 +35,22 @@ def _final_status(bundle) -> str:
     return "READY_FOR_REVIEW"
 
 
-def _coshh_status(output_dir: Path) -> str:
+def _coshh_payload(output_dir: Path) -> dict:
     path = output_dir / "COSHH_STATUS.json"
     if not path.exists():
-        return "FAILED"
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE"}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return str(payload.get("status") or "FAILED")
+        return {
+            "status": str(payload.get("status") or "FAILED"),
+            "sds_status": str(payload.get("sds_status") or "NOT_AVAILABLE"),
+        }
     except Exception:
-        return "FAILED"
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE"}
+
+
+def _coshh_status(output_dir: Path) -> str:
+    return _coshh_payload(output_dir)["status"]
 
 
 def _process_pending() -> None:
@@ -92,7 +99,17 @@ def home() -> str:
 def queue_rows() -> list[dict]:
     settings = _settings()
     queue = MaterialQueue(settings.database_path)
-    return [dict(row) for row in queue.list_rows()]
+    result: list[dict] = []
+    for row in queue.list_rows():
+        payload = dict(row)
+        payload["sds_status"] = "NOT_AVAILABLE"
+        if row["output_dir"]:
+            coshh = _coshh_payload(Path(row["output_dir"]).resolve())
+            payload["sds_status"] = coshh["sds_status"]
+            if not payload.get("coshh_status") or payload["coshh_status"] == "RESEARCHING":
+                payload["coshh_status"] = coshh["status"]
+        result.append(payload)
+    return result
 
 
 @app.post("/api/materials")
@@ -219,8 +236,8 @@ async function add(run){const body={material_name:m.value.trim(),dosage_forms:do
 async function runAll(){await fetch('/api/run',{method:'POST'});note('Pending assessments are being processed.');setTimeout(refresh,1000)}
 async function uploadCsv(){const f=document.getElementById('csv').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);const r=await fetch('/api/import-csv',{method:'POST',body:fd});const x=await r.json();note(r.ok?`${x.imported} material(s) imported.`:(x.detail||'Import failed.'));await refresh()}
 function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.cleaning_status||row.status)}</span>`;const b=`/api/download/${row.id}/`;return `<div class="status">${esc(row.cleaning_status||row.status)}</div><span class="links"><a href="${b}form">Form</a><a href="${b}dossier">Dossier</a><a href="${b}pdf">PDF</a><a href="${b}summary">Summary</a></span>`}
-function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;let links=`<a href="${b}coshh">COSHH</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`;if(row.coshh_status!=='FAILED')links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`;return `<div class="status">${esc(row.coshh_status||'')}</div><span class="links">${links}</span>`}
+function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;let links=`<a href="${b}coshh">COSHH</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
 async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
 refresh();setInterval(refresh,5000);
 </script></body></html>'''
