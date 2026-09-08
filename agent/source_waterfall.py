@@ -28,6 +28,9 @@ _SOURCE_WATERFALLS: dict[str, tuple[str, ...]] = {
     ),
     "2% Decon Solubility": (
         "DIRECT_MATERIAL_DECON",
+        "COMPARABLE_ALKALINE_CLEANER",
+        "ALKALINE_SOLUBILITY",
+        "PH_SOLUBILITY_PKA",
         "BRITISH_EUROPEAN_PHARMACOPOEIA",
         "PUBCHEM",
         "PUBMED_PMC",
