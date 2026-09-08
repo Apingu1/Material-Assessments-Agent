@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TypeVar
 
@@ -23,6 +24,14 @@ from .rescue_prompts import source_family_rescue_prompt
 T = TypeVar("T", bound=BaseModel)
 
 
+def _safe_schema_name(value: str) -> str:
+    """Keep OpenAI structured-output schema names within the 64-character API limit."""
+    if len(value) <= 64:
+        return value
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+    return f"{value[:55]}_{digest}"
+
+
 class ResearchAgent:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -30,6 +39,7 @@ class ResearchAgent:
 
     def _structured_web_research(self, prompt: str, model_cls: type[T], schema_name: str) -> T:
         schema = model_cls.model_json_schema()
+        api_schema_name = _safe_schema_name(schema_name)
         response = self.client.responses.create(
             model=self.settings.openai_model,
             tools=[{"type": "web_search"}],
@@ -38,7 +48,7 @@ class ResearchAgent:
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": schema_name,
+                    "name": api_schema_name,
                     "schema": schema,
                     "strict": True,
                 }
