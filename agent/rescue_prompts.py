@@ -15,6 +15,9 @@ _FAMILY_RULES: dict[str, str] = {
     "DRUGBANK": "Return only DrugBank evidence directly relevant to the endpoint.",
     "MANUFACTURER_TECHNICAL": "Return only an established manufacturer/supplier technical document or SDS that directly addresses the assessed material/property.",
     "DIRECT_MATERIAL_DECON": "Return only evidence that directly reports the assessed chemical species/material in Decon 90 or a 2% Decon cleaning solution. Cleaner composition, dilution instructions and product advertising are prohibited.",
+    "COMPARABLE_ALKALINE_CLEANER": "Return only material-specific evidence in another alkaline detergent/cleaning system that can reasonably inform behaviour in 2% Decon. Do not return cleaner composition alone.",
+    "ALKALINE_SOLUBILITY": "Return only evidence about the assessed chemical species in dilute alkali, alkaline buffer, sodium/potassium hydroxide, or an aqueous system around pH 10-11. The evidence must describe the MATERIAL, not the cleaner.",
+    "PH_SOLUBILITY_PKA": "Return only material-specific pH-solubility, pKa or ionisation evidence that can support a scientifically explicit alkaline-solubility inference. Do not assume alkaline conditions improve solubility; basic compounds may become less soluble as pH rises.",
     "PROCESS_PRODUCT_INFORMATION": "Return only evidence about the actual process material or product presentation that materially supports physical cleanability. Prefer the supplied manufacturing context where it is more directly relevant than generic product literature.",
     "UK_EU_REGULATORY": "Return only UK/EU regulatory hazard evidence from MHRA/GOV.UK, eMC, EMA or ECHA.",
     "PUBCHEM_ECHA": "Return only PubChem or ECHA hazard evidence.",
@@ -63,8 +66,8 @@ Previously attempted URLs: {_joined(existing_urls)}
 
 ENDPOINT RULES
 - POTENCY: search the active ingredient across relevant strengths/formulations for the route. Do not restrict to the incoming strength, tablet/powder presentation or Eaststone starting material. Use routine adult dosing unless the supplied context explicitly requires paediatric/neonatal use.
-- WATER/IPA/DECON: search the chemical species, preserving meaningful salt/hydrate/form while dropping presentation words such as powder/tablets.
-- 2% DECON: never use Decon product composition, surfactants, dilution instructions or cleaner advertising as evidence of material solubility.
+- WATER/IPA: search the chemical species, preserving meaningful salt/hydrate/form while dropping presentation words such as powder/tablets.
+- 2% DECON: use the specified alkaline evidence family. Decon being alkaline does not automatically improve solubility. For pKa/pH evidence, explicitly account for acid/base behaviour and return only a conclusion that supports the existing assessment scientifically.
 - PHYSICAL CLEANABILITY: prioritise the actual process residue/material described by the user.
 - Avoid URLs already attempted unless the URL is a genuinely different official representation.
 - Return normally ONE source and never more than TWO.
