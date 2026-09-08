@@ -215,19 +215,103 @@ Research broadly, but return only the strongest sources needed for the decision.
 - Ethanol/alcohol evidence about the assessed chemical species may support an INFERRED conclusion, but label it INFERRED and explain why.
 - Consider that 70% IPA contains about 30% water; do not automatically equate ethanol solubility with 70% IPA solubility.
 
-2% DECON - MATERIAL SOLUBILITY RULE:
-The question is: how soluble is the assessed CHEMICAL SPECIES in 2% Decon 90? It is NOT asking what Decon 90 contains or how Decon 90 is diluted.
-- First search specifically for solubility/behaviour of the chemical species in Decon 90 or a 2% Decon cleaning solution.
-- If direct material-in-Decon evidence is unavailable, search for the chemical species' solubility/behaviour in scientifically relevant solvents such as water, isopropanol/2-propanol, ethanol, methanol or other documented solvent systems, and use those MATERIAL properties to make a clearly labelled INFERRED assessment where justified.
-- NEVER use Decon 90 product composition, detergent ingredients, surfactant content, dilution instructions, product advertising or cleaning-agent characteristics as evidence of the assessed material's solubility.
-- Do not include a Decon manufacturer/supplier webpage as a source unless the relevant finding specifically reports solubility or behaviour of the assessed chemical species in that system.
-- If available material-solvent evidence still does not justify a category, use REVIEW_REQUIRED rather than pretending the cleaner's composition resolves the question.
+2% DECON - ALKALINE SOLUBILITY WATERFALL:
+The question is how readily the assessed CHEMICAL SPECIES is expected to be removed by 2% Decon 90. Direct material-in-Decon data is uncommon, so use this fixed scientific hierarchy:
+1. DIRECT_DECON - direct evidence for the assessed chemical species/material in 2% Decon 90 or Decon 90.
+2. COMPARABLE_ALKALINE_CLEANER - material-specific evidence in a comparable alkaline detergent/cleaner.
+3. ALKALINE_SOLUTION - material-specific solubility/behaviour in dilute alkali, alkaline buffer or an aqueous system around pH 10-11.
+4. PH_SOLUBILITY - experimentally described pH-solubility behaviour that supports behaviour under alkaline conditions.
+5. PKA_IONISATION_INFERENCE - pKa/acid-base behaviour may support an INFERRED conclusion only when the chemistry is clear.
+6. REVIEW_REQUIRED - if none of the above justifies a category.
+
+Mandatory chemistry safeguard:
+- Decon being alkaline does NOT mean every material is more soluble in it.
+- Determine whether the assessed species is acidic, basic, amphoteric or effectively neutral where relevant.
+- For a basic compound, raising pH can reduce ionisation and can REDUCE aqueous solubility; for an acidic compound, raising pH may increase ionisation and solubility. Amphoteric behaviour can be more complex.
+- Never infer improved Decon solubility merely because Decon is alkaline.
+- Decon product composition, surfactant content, dilution instructions and product advertising are not evidence of the assessed material's solubility.
+- The decon2 rationale MUST begin with "Evidence basis: <one of the hierarchy labels above>." so the basis is visible in the research record.
+- If only indirect alkaline/pKa reasoning is available, set evidence_status=INFERRED.
 
 PHYSICAL CLEANABILITY RULE:
 The user's manufacturing context is admissible evidence for physical cleanability because it describes the real process material. Base the classification primarily on the resolved process material where appropriate. Product literature may corroborate dosage form/presentation but should not replace clear process information.
 
 When evidence does not justify a category, use REVIEW_REQUIRED rather than inventing a result.
 Do not research PDE values.
+Return structured data only.
+"""
+
+
+def coshh_prompt(
+    material_name: str,
+    chemical_identity: str,
+    active_moiety: str,
+    synonyms: list[str],
+    process_material_description: str,
+    product_context: str,
+) -> str:
+    return f"""{SOURCE_TIERS}
+TASK: Prepare the factual research package for a DRAFT UK COSHH assessment. The output will be combined with Eaststone workplace/activity rules and must remain subject to human review and wet-signature approval.
+
+CONTROLLED EASTSTONE MATERIAL
+{material_name}
+
+RESOLVED CHEMICAL SPECIES
+{chemical_identity or material_name}
+
+RESOLVED ACTIVE / BASE SUBSTANCE
+{active_moiety or chemical_identity or material_name}
+
+SYNONYMS
+{_joined(synonyms)}
+
+PROCESS MATERIAL / EXPOSURE CONTEXT
+{process_material_description or product_context or material_name}
+
+IMPORTANT NAMING RULE
+- The COSHH primary substance name should normally be the underlying hazardous substance without incoming strength/presentation. Example: "Haloperidol 10 mg Tablets" -> COSHH substance name "Haloperidol".
+- Preserve the exact Eaststone material name and actual handling form separately in material_use_context.
+- Do not silently treat a tablet-use assessment as equivalent to handling pure API powder.
+
+SDS-FIRST RULE
+Find ONE strong, current Safety Data Sheet before drafting the hazard package. Prefer in this order:
+1. The actual Eaststone supplier/manufacturer SDS when the supplier can be identified from available context.
+2. A manufacturer SDS for the exact chemical species/CAS.
+3. A recognised major chemical supplier SDS for the exact chemical species/CAS.
+Do not use a different salt/base form, mixture or related compound without explicitly setting match_status=REVIEW_REQUIRED.
+If the selected SDS is not demonstrated to be the actual Eaststone supplier SDS, set match_status=REFERENCE_SDS and is_supplier_specific=false.
+Never invent an SDS URL, revision date, product number or CAS number.
+
+SDS EXTRACTION
+Use the selected SDS as the principal evidence and extract, where available:
+- substance identity and CAS number (Section 1/3);
+- current GHS/CLP pictograms, signal word, H-statements and important P-statements (Section 2);
+- physical form, colour and odour (Section 9);
+- first aid (Section 4);
+- firefighting media (Section 5);
+- accidental release (Section 6);
+- handling/storage (Section 7);
+- exposure/PPE information (Section 8);
+- disposal (Section 13).
+
+COSHH IS NOT JUST AN SDS
+Also determine whether a GB Workplace Exposure Limit is listed in EH40/HSE or another authoritative UK source. It is legitimate for no WEL to exist.
+The agent must consider health-surveillance relevance, particularly for explicit skin/respiratory sensitisation or other health effects where surveillance could be appropriate, but the final decision remains human/site-specific.
+
+HAZARD / ROUTE RULES
+- `pictograms` must contain only GHS01-GHS09 codes explicitly supported by the selected SDS/current classification evidence.
+- hazard_statements should contain H-code plus wording where available.
+- Do not infer an inhalation/skin/eye hazard simply because exposure is physically possible; separate intrinsic hazard from workplace exposure.
+- ingestion_hazard may be true even though ingestion is not a credible routine workplace route.
+
+CORE CONTROLS
+Return a short list of substance-level control principles only (e.g. avoid dust, avoid skin contact, keep container closed). Do not invent Eaststone engineering controls, booth names, LEV, isolators or PPE practices that were not supplied. Workplace controls and activity-specific PPE are added by deterministic Eaststone rules after this research step.
+
+SOURCE CURATION
+- The selected SDS source must appear as `sds.source` and in `sources`.
+- Add at most two additional sources only if needed for UK WEL/health-surveillance or current hazard corroboration.
+- Keep the factual package concise.
+
 Return structured data only.
 """
 
@@ -266,9 +350,9 @@ RESCUE SEARCH RULES
 - Prefer a different authoritative page/document or a more capture-friendly official representation of the same evidence.
 - Search broader aliases, strengths and formulations where scientifically appropriate.
 - For POTENCY, search the active ingredient across route-appropriate formulations and strengths; do not restrict to the incoming strength/presentation. Prefer BNF/NICE and eMC.
-- For WATER/IPA/DECON, search the chemical species, retaining meaningful salt/form but dropping presentation words such as powder/tablets.
+- For WATER/IPA, search the chemical species, retaining meaningful salt/form but dropping presentation words such as powder/tablets.
+- For 2% DECON, use the same alkaline evidence waterfall as the primary research: direct Decon -> comparable alkaline cleaner -> material-specific alkaline solution/pH 10-11 -> pH-solubility -> pKa/ionisation inference. Do not use cleaner composition as material-solubility evidence.
 - For PHYSICAL CLEANABILITY, use the real process material/context rather than generic API crystal data.
-- For 2% DECON, do not return Decon product composition/dilution/product pages unless they specifically report behaviour of the assessed chemical species.
 - Avoid URLs already attempted unless the alternative URL is a genuinely different official representation that is more likely to be captured.
 - Return no more than TWO sources and normally ONE.
 - Interpretation must be plain professional language and must not mention tiers, AI, agents or rescue/search mechanics.
