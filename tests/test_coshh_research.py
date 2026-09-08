@@ -18,7 +18,7 @@ def test_decon_prompt_uses_alkaline_solubility_waterfall_and_acid_base_safeguard
     assert "PKA_IONISATION_INFERENCE" in prompt
     assert "basic compound" in prompt
     assert "can REDUCE aqueous solubility" in prompt
-    assert "must begin with \"Evidence basis:" in prompt
+    assert "MUST begin with \"Evidence basis:" in prompt
 
 
 def test_coshh_prompt_is_sds_first_and_separates_substance_from_material_context():
