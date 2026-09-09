@@ -105,4 +105,7 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     assert "H302" in text
     assert "Reviewed by" in text
     assert "Approved by" in text
-    assert "AGENT-GENERATED DRAFT" in text
+    assert "AGENT-GENERATED DRAFT" not in text
+    assert "Personal Protective Equipment" in text
+    assert "☑ Gloves" in text
+    assert "☐ Face shield" in text

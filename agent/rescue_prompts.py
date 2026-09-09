@@ -4,6 +4,7 @@ from .prompts import GENERAL, SOURCE_TIERS
 
 
 _FAMILY_RULES: dict[str, str] = {
+    "BNF_NICE": "Return only the verified BNF drug monograph from bnf.nice.org.uk. Read its Indications and dose section. Return the exact relevant dose extract including numeric dose, units, frequency, route and population where stated. Do not invent a URL or substitute another source. If unavailable or not supporting the existing conclusion, return no sources.",
     "NICE_GUIDANCE": "Return only NICE guidance or NICE-hosted clinical dosing evidence from nice.org.uk. Do not return BNF pages for this rescue family.",
     "EMC_SMPC": "Return only UK eMC Summary of Product Characteristics evidence from medicines.org.uk. Search relevant route-appropriate formulations and strengths, not only the Eaststone starting-material presentation.",
     "MHRA_EMA": "Return only MHRA/GOV.UK or EMA regulatory evidence.",

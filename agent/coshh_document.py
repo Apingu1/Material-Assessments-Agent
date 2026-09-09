@@ -13,6 +13,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from .document_text import assessment_text, hanging_bullet
 from .coshh_rules import AREA_LABELS
 from .models import COSHHActivityAssessment, COSHHArea, COSHHAssessment, GHSCode, MaterialInput, RiskBand
 from .sds import StoredSDS
@@ -68,12 +69,22 @@ def _margins(cell, value: int = 60) -> None:
 
 
 def _text(cell, value: str, *, bold: bool = False, size: float = 8.1, color: str = DARK, align=None) -> None:
+    if any(line.lstrip().startswith("•") for line in str(value).splitlines()):
+        for index, line in enumerate(str(value).splitlines()):
+            paragraph = cell.paragraphs[0] if index == 0 else cell.add_paragraph()
+            if line.lstrip().startswith("•"):
+                hanging_bullet(paragraph, line, size)
+            else:
+                run = paragraph.add_run(assessment_text(line))
+                run.font.name = "Arial"
+                run.font.size = Pt(size)
+        return
     paragraph = cell.paragraphs[0]
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(0)
     if align is not None:
         paragraph.alignment = align
-    run = paragraph.add_run(value or "")
+    run = paragraph.add_run(assessment_text(value))
     run.bold = bold
     run.font.name = "Arial"
     run.font.size = Pt(size)
@@ -86,7 +97,7 @@ def _para(target, value: str, *, bold: bool = False, size: float = 8.1, color: s
     paragraph.paragraph_format.space_after = Pt(after)
     if align is not None:
         paragraph.alignment = align
-    run = paragraph.add_run(value or "")
+    run = paragraph.add_run(assessment_text(value))
     run.bold = bold
     run.font.name = "Arial"
     run.font.size = Pt(size)
@@ -95,8 +106,18 @@ def _para(target, value: str, *, bold: bool = False, size: float = 8.1, color: s
 
 
 def _style_table(table, widths: list[float], margin: int = 55) -> None:
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
+    widths = [width * 7.35 / sum(widths) for width in widths]
+    props = table._tbl.tblPr
+    indent = OxmlElement("w:tblInd")
+    indent.set(qn("w:w"), "80")
+    indent.set(qn("w:type"), "dxa")
+    props.append(indent)
+    props.find(qn("w:tblW")).set(qn("w:w"), str(round(7.35 * 1440)))
+    props.find(qn("w:tblW")).set(qn("w:type"), "dxa")
+    for column, width in zip(table.columns, widths):
+        column.width = Inches(width)
     for row in table.rows:
         for index, cell in enumerate(row.cells):
             cell.width = Inches(widths[index])
@@ -131,9 +152,7 @@ def _clean_lines(values: list[str], limit: int = 3) -> str:
 
 def _hazard_line(values: list[str], limit: int = 5) -> str:
     values = [" ".join(value.split()) for value in values if value.strip()]
-    shown = values[:limit]
-    suffix = f" (+{len(values) - limit} more in research record)" if len(values) > limit else ""
-    return "\n".join(shown) + suffix
+    return "\n".join(values)
 
 
 def _draw_diamond(draw: ImageDraw.ImageDraw) -> None:
@@ -262,6 +281,36 @@ def _compact_activities(assessment: COSHHAssessment) -> list[COSHHActivityAssess
     return result
 
 
+def _ppe_section(doc, assessment, icon_dir):
+    from .ppe_icons import ppe_icon
+    import re
+    equipment = [value for activity in assessment.activities for value in activity.ppe]
+    categories = [
+        ("gloves", "Gloves", r"glove"),
+        ("eyes", "Eye protection", r"glasses|goggle|eye protection"),
+        ("clothing", "Protective clothing", r"coat|coverall|apron|protective clothing"),
+        ("rpe", "Respiratory protection", r"rpe|respirator|ffp"),
+        ("face", "Face shield", r"face shield|visor"),
+        ("footwear", "Safety footwear", r"boot|footwear|safety shoe"),
+    ]
+    table = doc.add_table(rows=1, cols=6)
+    _style_table(table, [1] * 6, margin=85)
+    details = []
+    for index, (kind, label, pattern) in enumerate(categories):
+        matches = list(dict.fromkeys(x for x in equipment if re.search(pattern, x, re.I)))
+        cell = table.cell(0, index)
+        paragraph = cell.paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.add_run().add_picture(str(ppe_icon(kind, icon_dir)), width=Inches(0.40))
+        _para(cell, ("☑ " if matches else "☐ ") + label, bold=True, size=7.5,
+              align=WD_ALIGN_PARAGRAPH.CENTER)
+        if matches:
+            details.extend(matches)
+    _para(doc, "Ticked items apply to the activities below. Normal area PPE also applies; conditional RPE requirements are listed below.", size=8, after=3)
+    for detail in dict.fromkeys(details):
+        hanging_bullet(doc.add_paragraph(), detail, 8)
+
+
 def build_coshh_docx(
     assessment: COSHHAssessment,
     item: MaterialInput,
@@ -271,7 +320,9 @@ def build_coshh_docx(
     research = assessment.research
     doc = Document()
     section = doc.sections[0]
-    section.top_margin = Inches(0.38)
+    section.page_width = Inches(8.27)
+    section.page_height = Inches(11.69)
+    section.top_margin = Inches(0.45)
     section.bottom_margin = Inches(0.32)
     section.left_margin = Inches(0.46)
     section.right_margin = Inches(0.46)
@@ -285,31 +336,23 @@ def build_coshh_docx(
     style.font.name = "Arial"
     style.font.size = Pt(10.8)
     style.font.bold = True
-    style.font.color.rgb = RGBColor.from_string(NAVY)
-    style.paragraph_format.space_before = Pt(4)
-    style.paragraph_format.space_after = Pt(2)
+    style.font.color.rgb = RGBColor.from_string("000000")
+    style.paragraph_format.left_indent = Inches(0)
+    style.paragraph_format.first_line_indent = Inches(0)
+    style.paragraph_format.keep_with_next = True
+    style.paragraph_format.space_before = Pt(10)
+    style.paragraph_format.space_after = Pt(5)
 
     header = doc.add_table(rows=1, cols=3)
-    header.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _style_table(header, [1.65, 4.55, 1.25])
+    header.alignment = WD_TABLE_ALIGNMENT.LEFT
     header.autofit = False
-    for index, width in enumerate((1.65, 4.55, 1.25)):
-        header.cell(0, index).width = Inches(width)
     for cell in header.rows[0].cells:
         _shading(cell, NAVY)
         _margins(cell, 85)
     _text(header.cell(0, 0), "EASTSTONE", bold=True, size=14, color=WHITE)
     _text(header.cell(0, 1), "COSHH ASSESSMENT", bold=True, size=16, color=WHITE, align=WD_ALIGN_PARAGRAPH.CENTER)
     _text(header.cell(0, 2), "DRAFT", bold=True, size=9, color=WHITE, align=WD_ALIGN_PARAGRAPH.RIGHT)
-
-    paragraph = doc.add_paragraph()
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.space_before = Pt(3)
-    paragraph.paragraph_format.space_after = Pt(5)
-    run = paragraph.add_run("AGENT-GENERATED DRAFT  |  HUMAN REVIEW & SIGNATURE REQUIRED")
-    run.font.name = "Arial"
-    run.font.size = Pt(8.8)
-    run.bold = True
-    run.font.color.rgb = RGBColor.from_string(RED)
 
     doc.add_paragraph("1. Substance & Assessment Scope", style="SectionTitle")
     identity = doc.add_table(rows=5, cols=4)
@@ -351,11 +394,11 @@ def build_coshh_docx(
     _para(class_cell, _hazard_line(research.hazard_statements, 5) or "No H-statements identified", size=7.8, after=0)
 
     summary_cell = hazards.cell(0, 2)
-    _text(summary_cell, "What matters for Eaststone", bold=True, size=8.7, color=NAVY)
+    _text(summary_cell, "Handling precautions", bold=True, size=8.7, color=NAVY)
     for control in research.core_controls[:3]:
-        _para(summary_cell, f"• {control}", size=7.9)
+        hanging_bullet(summary_cell.add_paragraph(), control, 7.9)
     if research.workplace_exposure_limit_found:
-        _para(summary_cell, f"• WEL identified: {research.workplace_exposure_limit}", size=7.9, color=RED)
+        hanging_bullet(summary_cell.add_paragraph(), f"WEL: {research.workplace_exposure_limit}", 7.9)
 
     doc.add_paragraph("3. Exposure Routes", style="SectionTitle")
     exposure = doc.add_table(rows=5, cols=3)
@@ -388,20 +431,22 @@ def build_coshh_docx(
         _text(controls_table.cell(index, 0), label, bold=True, size=7.9, color=NAVY)
         _text(controls_table.cell(index, 1), value, size=7.9)
 
+    doc.add_paragraph("5. Personal Protective Equipment", style="SectionTitle")
+    _ppe_section(doc, assessment, icon_dir)
+
     doc.add_page_break()
 
     page_header = doc.add_table(rows=1, cols=2)
-    page_header.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _style_table(page_header, [5.7, 1.7])
+    page_header.alignment = WD_TABLE_ALIGNMENT.LEFT
     page_header.autofit = False
-    page_header.cell(0, 0).width = Inches(5.7)
-    page_header.cell(0, 1).width = Inches(1.7)
     for cell in page_header.rows[0].cells:
         _shading(cell, NAVY)
         _margins(cell, 70)
     _text(page_header.cell(0, 0), "COSHH ACTIVITY & CONTROL ASSESSMENT", bold=True, size=12.5, color=WHITE)
     _text(page_header.cell(0, 1), research.coshh_substance_name, bold=True, size=8.1, color=WHITE, align=WD_ALIGN_PARAGRAPH.RIGHT)
 
-    doc.add_paragraph("5. Activity-Specific Assessment", style="SectionTitle")
+    doc.add_paragraph("6. Activity-Specific Assessment", style="SectionTitle")
     compact = _compact_activities(assessment)
     table = doc.add_table(rows=len(compact) + 1, cols=6)
     _style_table(table, [1.0, 1.28, 1.55, 2.65, 0.48, 0.58], margin=40)
@@ -429,20 +474,7 @@ def build_coshh_docx(
             else:
                 _text(cell, str(value), bold=col_index == 0, size=7.0, color=NAVY if col_index == 0 else DARK)
 
-    if assessment.review_flags:
-        note = doc.add_paragraph()
-        note.paragraph_format.space_before = Pt(2)
-        note.paragraph_format.space_after = Pt(2)
-        run = note.add_run("Review: ")
-        run.bold = True
-        run.font.name = "Arial"
-        run.font.size = Pt(7.4)
-        run.font.color.rgb = RGBColor.from_string(NAVY)
-        run = note.add_run(" ".join(assessment.review_flags[:2]))
-        run.font.name = "Arial"
-        run.font.size = Pt(7.4)
-
-    doc.add_paragraph("6. Emergency, First Aid & Storage", style="SectionTitle")
+    doc.add_paragraph("7. Emergency, First Aid & Storage", style="SectionTitle")
     emergency = doc.add_table(rows=5, cols=2)
     _style_table(emergency, [1.5, 5.9], margin=40)
     emergency_rows = [
@@ -457,13 +489,17 @@ def build_coshh_docx(
         _text(emergency.cell(index, 0), label, bold=True, size=7.4, color=NAVY)
         _text(emergency.cell(index, 1), value, size=7.4)
 
-    doc.add_paragraph("7. SDS Traceability & Human Approval", style="SectionTitle")
+    doc.add_paragraph("8. Review and Approval", style="SectionTitle")
+    if assessment.review_flags:
+        _para(doc, "Confirm before approval", bold=True, size=8.5, after=3)
+        for flag in assessment.review_flags:
+            hanging_bullet(doc.add_paragraph(), flag, 8.0)
     metadata = doc.add_table(rows=3, cols=4)
     _style_table(metadata, [1.1, 2.55, 1.1, 2.65], margin=40)
     metadata_rows = [
         ("SDS", research.sds.manufacturer or "Reference SDS", "SDS status", research.sds.match_status.replace("_", " ").title()),
         ("Revision", research.sds.revision_date or "Not stated", "Original SDS", "Stored unchanged" if stored_sds.status == "STORED_UNCHANGED" else "Source URL retained"),
-        ("Health surveillance", "Considered" if research.health_surveillance_considered else "Review", "Recommendation", "Human review required" if research.health_surveillance_recommended else "No specific surveillance identified"),
+        ("Health surveillance", "Considered" if research.health_surveillance_considered else "Review", "Recommendation", research.health_surveillance_rationale if research.health_surveillance_recommended else "No specific surveillance identified"),
     ]
     for row_index, row in enumerate(metadata_rows):
         for col_index, value in enumerate(row):
@@ -473,6 +509,7 @@ def build_coshh_docx(
             else:
                 _text(metadata.cell(row_index, col_index), value, size=7.3)
 
+    _para(doc, "", after=4)
     approval = doc.add_table(rows=2, cols=4)
     _style_table(approval, [1.05, 2.65, 1.15, 2.55], margin=40)
     approval_rows = [
@@ -490,15 +527,15 @@ def build_coshh_docx(
     for doc_section in doc.sections:
         footer = doc_section.footer.paragraphs[0]
         footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = footer.add_run("DRAFT - HUMAN REVIEW AND SIGNATURE REQUIRED")
+        run = footer.add_run("COSHH Assessment | Draft")
         run.font.name = "Arial"
         run.font.size = Pt(7.0)
         run.bold = True
         run.font.color.rgb = RGBColor.from_string(RED)
 
     doc.core_properties.title = f"COSHH Assessment - {research.coshh_substance_name}"
-    doc.core_properties.subject = "Agent-generated COSHH draft for human review"
-    doc.core_properties.author = "Eaststone Material Assessments Agent"
+    doc.core_properties.subject = "COSHH assessment"
+    doc.core_properties.author = "Eaststone"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(output_path)
 

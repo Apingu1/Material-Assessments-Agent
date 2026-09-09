@@ -11,6 +11,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 
 from .evidence import EvidenceCapture
+from .document_text import hanging_bullet
 
 
 APPENDIX_FONT = "Arial"
@@ -121,8 +122,13 @@ def _labelled_paragraph(doc: Document, label: str, value: str, size: float = 9.5
     label_run = p.add_run(f"{label}: ")
     label_run.bold = True
     _font_run(label_run, size)
-    value_run = p.add_run(value or "N/A")
-    _font_run(value_run, size)
+    if any(line.lstrip().startswith("•") for line in (value or "").splitlines()):
+        for line in value.splitlines():
+            if line.strip():
+                hanging_bullet(doc.add_paragraph(), line, size)
+    else:
+        value_run = p.add_run(value or "N/A")
+        _font_run(value_run, size)
 
 
 def find_soffice() -> str | None:

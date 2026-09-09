@@ -78,17 +78,15 @@ def _page_matches_source(body_text: str, source: EvidenceSource) -> bool:
 
 
 def _bnf_page_matches_source(body_text: str, source: EvidenceSource) -> bool:
-    """BNF often splits dose text across DOM nodes; use a more tolerant token check after navigation."""
-    if _page_matches_source(body_text, source):
-        return True
-    body_words = set(_normalise(body_text).split())
-    quote_words = _keywords(source.relevant_extract)
-    if quote_words and len(quote_words & body_words) / len(quote_words) >= 0.34:
-        return True
-    interpretation_words = _keywords(source.interpretation)
-    if interpretation_words and len(interpretation_words & body_words) / len(interpretation_words) >= 0.42:
-        return True
-    return False
+    """Verify the quotation, including dose values; interpretation alone is insufficient."""
+    numbers = re.findall(r"\d+(?:[.,]\d+)?", source.relevant_extract)
+    body_numbers = set(re.findall(r"\d+(?:[.,]\d+)?", body_text))
+    if numbers and not set(numbers).issubset(body_numbers):
+        return False
+    units = set(re.findall(r"\b(?:mg|micrograms?|mcg|µg|ug|grams?|ml)\b", source.relevant_extract.lower()))
+    if any(not re.search(r"\b" + re.escape(unit) + r"\b", body_text.lower()) for unit in units):
+        return False
+    return _page_matches_source(body_text, source)
 
 
 def _looks_blocked_or_broken(status: int | None, body_text: str) -> bool:
@@ -104,7 +102,7 @@ def _looks_blocked_or_broken(status: int | None, body_text: str) -> bool:
 
 def _is_bnf_url(url: str) -> bool:
     try:
-        return "bnf.nice.org.uk" in urlparse(url).netloc.lower()
+        return urlparse(url).hostname == "bnf.nice.org.uk"
     except ValueError:
         return False
 
@@ -216,6 +214,10 @@ class EvidenceCollector:
                 )
             except Exception as exc:
                 self._write_diagnostic(evidence_dir, stem, source.url, "BNF_BROWSER", exc)
+                return EvidenceCapture(
+                    source, group, appendix_label, None, None, "FAILED",
+                    _friendly_capture_error(exc),
+                )
 
         try:
             capture_path = self._capture_html(source, evidence_dir, stem)
@@ -337,7 +339,7 @@ class EvidenceCollector:
             raise EvidenceCaptureError("Relevant evidence text was not located on rendered page.")
         return body_text
 
-    def _scroll_to_relevant(self, page, source: EvidenceSource) -> None:
+    def _scroll_to_relevant(self, page, source: EvidenceSource) -> bool:
         candidates = [source.relevant_extract.strip(), *self._search_fragments(source.relevant_extract)]
         for candidate in candidates:
             if not candidate:
@@ -347,9 +349,11 @@ class EvidenceCollector:
                 if locator.count() > 0:
                     locator.scroll_into_view_if_needed()
                     page.wait_for_timeout(300)
-                    return
+                    return True
             except Exception:
                 continue
+
+        return False
 
     def _accept_nice_cookies(self, page) -> None:
         selectors = (
@@ -369,7 +373,7 @@ class EvidenceCollector:
                 continue
 
     def _capture_bnf_html(self, source: EvidenceSource, evidence_dir: Path, stem: str) -> Path:
-        """Best-effort BNF capture using a warmed UK browser session and tolerant dose-text matching."""
+        """Capture a verified BNF dose block after cookie handling and section expansion."""
         image_path = evidence_dir / f"{stem}-BNF.jpg"
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -414,6 +418,12 @@ class EvidenceCollector:
                 response = page.goto(source.url, wait_until="domcontentloaded", referer="https://bnf.nice.org.uk/")
                 page.wait_for_timeout(1000)
                 self._accept_nice_cookies(page)
+                page.locator("main").first.wait_for(state="visible")
+                for detail in page.locator("main details").all():
+                    if not detail.get_attribute("open"):
+                        summary = detail.locator("summary").first
+                        if summary.count() and summary.is_visible():
+                            summary.click()
                 status = response.status if response is not None else None
                 body_text = page.locator("body").inner_text(timeout=self.settings.playwright_timeout_ms)
                 if _looks_blocked_or_broken(status, body_text):
@@ -421,18 +431,25 @@ class EvidenceCollector:
                 if not _bnf_page_matches_source(body_text, source):
                     raise EvidenceCaptureError("Relevant BNF dose evidence text was not located on rendered page.")
 
-                self._scroll_to_relevant(page, source)
-                # If dose text is split across nodes, anchor the screenshot around the stable BNF section.
-                for heading in ("Indications and dose", "Dose", "Indications and doses"):
-                    try:
-                        locator = page.get_by_text(heading, exact=False).first
-                        if locator.count() > 0:
-                            locator.scroll_into_view_if_needed()
-                            page.wait_for_timeout(250)
-                            break
-                    except Exception:
+                # Find the smallest rendered block containing the dose quotation.
+                # Do not scroll back to the section navigation after finding it.
+                block = page.locator("main").first if page.locator("main").count() else page.locator("body")
+                candidates = block.locator("p, li, dd, section, div")
+                best = None
+                best_length = float("inf")
+                for index in range(candidates.count()):
+                    candidate = candidates.nth(index)
+                    if not candidate.is_visible():
                         continue
-                page.screenshot(path=str(image_path), full_page=False, type="jpeg", quality=88)
+                    text = candidate.inner_text()
+                    if len(text) < best_length and _bnf_page_matches_source(text, source):
+                        best, best_length = candidate, len(text)
+                if best is None:
+                    raise EvidenceCaptureError("Relevant BNF dose evidence text was not located in a capture block.")
+                best.scroll_into_view_if_needed()
+                best.evaluate("el => el.style.outline = '3px solid #b8860b'")
+                # Capture the actual dose block, including wrapped lines across DOM nodes.
+                best.screenshot(path=str(image_path), type="jpeg", quality=92)
                 context.close()
             finally:
                 browser.close()

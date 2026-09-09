@@ -14,6 +14,9 @@ Use the best source FOR THE QUESTION, not a universal source order. Do not inven
 INTERNAL APPLICABILITY TAGS
 For every source, populate applicability using one or more of: EXACT_MATERIAL, CHEMICAL_SPECIES, ACTIVE_MOIETY, CLINICAL_FORMULATION, PROCESS_CONTEXT. These tags are internal only and are not printed in the appendix.
 
+ASSESSMENT WRITING STYLE
+Write concise factual sentences in the style of a completed workplace assessment. Do not narrate research, mention missing input, or use AI/agent language in descriptive fields. For example: "Haloperidol 10 mg tablets, including tablet excipients, handled during manufacture of an oral suspension." Do not append "specific processing steps were not supplied". Put necessary unresolved site details in review_note as short actions (e.g. "Confirm quantity handled before approval"). Preserve scientific uncertainty and SDS applicability limitations; never invent site facts or delete material safety qualifications. Use plain text without Markdown tables or bold markers inside fields.
+
 HUMAN-READABLE INTERPRETATION
 The interpretation field must be plain professional language. Never write "Tier 1", "Tier 2", "AI", "agent", "research lane", "model", or similar system language in the interpretation because it is printed in the appendix.
 

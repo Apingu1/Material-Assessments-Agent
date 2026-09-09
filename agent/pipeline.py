@@ -16,7 +16,7 @@ from .curation import (
 )
 from .docx_template import checkbox, fill_content_controls
 from .dossier import append_evidence_dossier, convert_docx_to_pdf
-from .evidence import EvidenceCapture, EvidenceCollector
+from .evidence import _is_bnf_url, EvidenceCapture, EvidenceCollector
 from .models import Conclusion, EvidenceSource, MaterialInput, ResearchBundle
 from .research import ResearchAgent
 from .rules import calculate_scoring
@@ -310,6 +310,21 @@ class AssessmentPipeline:
         evidence_dir = material_dir / "evidence"
         material_dir.mkdir(parents=True, exist_ok=True)
         evidence_dir.mkdir(parents=True, exist_ok=True)
+
+        # A successful alternative source must not prevent the requested BNF check.
+        if not any(_is_bnf_url(source.url) for source in bundle.potency.sources):
+            try:
+                bnf = self.researcher.rescue_evidence_from_family(
+                    item=item, identity=bundle.identity, family="BNF_NICE", group="Potency",
+                    target_summary=_group_target_summary(bundle, "Potency"),
+                    existing_urls=[source.url for source in bundle.potency.sources],
+                )
+                if bnf.supports_existing_conclusion:
+                    bundle.potency.sources.extend(source for source in bnf.sources if _is_bnf_url(source.url))
+                (evidence_dir / "BNF-source-check.json").write_text(
+                    bnf.model_dump_json(indent=2), encoding="utf-8")
+            except Exception as exc:
+                (evidence_dir / "BNF-source-check-DIAGNOSTIC.txt").write_text(str(exc), encoding="utf-8")
 
         groups: list[tuple[str, int, list[EvidenceSource], int]] = [
             ("Hazard", 1, curate_hazard_sources(bundle.hazard, limit=5), 5),
