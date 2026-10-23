@@ -37,6 +37,8 @@ def test_coshh_prompt_is_sds_first_and_separates_substance_from_material_context
     assert "material_use_context" in prompt
     assert "actual Eaststone supplier" in prompt
     assert "GB Workplace Exposure Limit" in prompt
+    assert "relevant_health_effects" in prompt
+    assert "Section 11" in prompt
     assert "Do not invent Eaststone engineering controls" in prompt
 
 
