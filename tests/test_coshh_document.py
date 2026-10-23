@@ -4,6 +4,7 @@ from docx import Document
 
 from agent.coshh_document import build_coshh_docx
 from agent.coshh_rules import build_coshh_assessment
+from agent.coshh_template import build_coshh_template_values
 from agent.models import (
     COSHHArea,
     COSHHResearch,
@@ -51,6 +52,7 @@ def _research():
         signal_word="WARNING",
         pictograms=[GHSCode.GHS07, GHSCode.GHS08],
         hazard_statements=["H302 - Harmful if swallowed", "H317 - May cause an allergic skin reaction"],
+        relevant_health_effects=["Harmful if swallowed", "May cause an allergic skin reaction"],
         precautionary_statements=[],
         inhalation_hazard=False,
         skin_hazard=True,
@@ -93,8 +95,17 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
         note="Stored unchanged",
     )
     out = tmp_path / "coshh.docx"
-    build_coshh_docx(assessment, item, stored, out)
+    template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    build_coshh_docx(assessment, item, stored, out, template_path=template)
     assert out.exists()
+
+    values = build_coshh_template_values(assessment, item, stored)
+    assert values["DER_PPE_QC_FUME_HOOD"] is True
+    assert values["DER_PPE_QC_FULL_FACE_RESPIRATOR"] is False
+    assert values["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"] is True
+    assert values["HUM_ASSESSED_NAME_POSITION"] == ""
+    assert values["HUM_REVIEWED_SIGNATURE"] == ""
+    assert values["HUM_APPROVED_DATE"] == ""
     doc = Document(out)
     text = "\n".join(p.text for p in doc.paragraphs)
     for table in doc.tables:
@@ -106,6 +117,8 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     assert "Reviewed by" in text
     assert "Approved by" in text
     assert "AGENT-GENERATED DRAFT" not in text
-    assert "Personal Protective Equipment" in text
-    assert "☑ Gloves" in text
-    assert "☐ Face shield" in text
+    assert "Departmental Personal Protective Equipment" in text
+    assert "Relevant health effects" in text
+    assert "Harmful if swallowed" in text
+    assert "Full-face" in text
+    assert "Fume" in text
