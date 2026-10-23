@@ -316,7 +316,14 @@ def build_coshh_docx(
     item: MaterialInput,
     stored_sds: StoredSDS,
     output_path: Path,
+    template_path: Path | None = None,
 ) -> None:
+    if template_path is not None:
+        from .coshh_template import build_coshh_from_template
+
+        build_coshh_from_template(assessment, item, stored_sds, template_path, output_path)
+        return
+
     research = assessment.research
     doc = Document()
     section = doc.sections[0]
