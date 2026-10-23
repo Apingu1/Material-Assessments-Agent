@@ -461,7 +461,13 @@ class AssessmentPipeline:
                 coshh_assessment.model_dump_json(indent=2), encoding="utf-8"
             )
             coshh_docx = material_dir / f"{_slug(bundle.coshh.coshh_substance_name)} - COSHH Assessment - DRAFT.docx"
-            build_coshh_docx(coshh_assessment, item, stored_sds, coshh_docx)
+            build_coshh_docx(
+                coshh_assessment,
+                item,
+                stored_sds,
+                coshh_docx,
+                template_path=self.settings.coshh_template_path,
+            )
             if self.settings.generate_pdf:
                 convert_docx_to_pdf(coshh_docx, material_dir)
             (material_dir / "COSHH_REVIEW_SUMMARY.txt").write_text(
