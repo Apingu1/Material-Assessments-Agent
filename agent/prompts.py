@@ -289,6 +289,7 @@ SDS EXTRACTION
 Use the selected SDS as the principal evidence and extract, where available:
 - substance identity and CAS number (Section 1/3);
 - current GHS/CLP pictograms, signal word, H-statements and important P-statements (Section 2);
+- relevant acute/chronic health effects stated in Section 2 and/or Section 11, populated in relevant_health_effects without strengthening or inferring claims;
 - physical form, colour and odour (Section 9);
 - first aid (Section 4);
 - firefighting media (Section 5);
@@ -304,6 +305,7 @@ The agent must consider health-surveillance relevance, particularly for explicit
 HAZARD / ROUTE RULES
 - `pictograms` must contain only GHS01-GHS09 codes explicitly supported by the selected SDS/current classification evidence.
 - hazard_statements should contain H-code plus wording where available.
+- relevant_health_effects must contain only health effects supported by the selected SDS (prefer Sections 2 and 11); do not derive extra effects from general knowledge.
 - Do not infer an inhalation/skin/eye hazard simply because exposure is physically possible; separate intrinsic hazard from workplace exposure.
 - ingestion_hazard may be true even though ingestion is not a credible routine workplace route.
 
