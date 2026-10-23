@@ -99,8 +99,21 @@ def test_high_concern_powder_weighing_requires_review_and_p3_when_controls_unkno
     weighing = next(x for x in assessment.activities if x.activity == "Weighing")
     assert weighing.initial_risk.value == "HIGH"
     assert weighing.review_required is True
-    assert any("P3" in value for value in weighing.ppe)
+    assert any("Full-face respirator" in value for value in weighing.ppe)
     assert any("engineering" in flag.lower() for flag in assessment.review_flags)
+
+
+def test_qc_airborne_control_uses_extracted_fume_hood_not_respirator():
+    item = MaterialInput(
+        material_name="Haloperidol 10 mg Tablets",
+        product_context="Tablets are crushed to a powder before QC sample preparation",
+        coshh_areas=[COSHHArea.QC],
+        existing_controls="",
+    )
+    assessment = build_coshh_assessment(item, research(high=True))
+    weighing = next(x for x in assessment.activities if x.activity == "Weigh / prepare sample")
+    assert any("fume hood" in value.lower() for value in weighing.controls + weighing.ppe)
+    assert not any("respirator" in value.lower() or "rpe" in value.lower() for value in weighing.ppe)
 
 
 def test_reference_sds_is_flagged_for_human_review():
