@@ -162,6 +162,7 @@ def _ppe_and_controls(
     item: MaterialInput,
     research: COSHHResearch,
     *,
+    area: COSHHArea,
     profile: str,
     severity: int,
     powder: bool,
@@ -182,9 +183,15 @@ def _ppe_and_controls(
     if open_task:
         controls.append("Minimise the quantity exposed and keep containers closed when not in use")
 
-    engineered = _has_engineering_controls(item)
-    if open_task and (powder or volatile):
-        if engineered:
+    airborne = open_task and (powder or volatile)
+    site_engineered = _has_engineering_controls(item)
+    qc_fume_hood = area == COSHHArea.QC and airborne
+
+    if airborne:
+        if qc_fume_hood:
+            controls.append("Use the contained QC fume hood extracted to the external stack")
+            ppe.append("Fume hood")
+        elif site_engineered:
             controls.append(f"Use existing engineering/containment control: {item.existing_controls.strip()}")
         else:
             controls.append("Confirm suitable local engineering/containment controls before approval")
@@ -195,14 +202,15 @@ def _ppe_and_controls(
     if open_task and (research.eye_hazard or powder or profile == "SPILL"):
         ppe.append("Safety glasses / goggles")
 
-    if powder and open_task:
-        if severity >= 3 or "H334" in _codes(research) or "H330" in _codes(research):
-            ppe.append("P3 RPE if residual airborne exposure remains")
-            review = True
-        else:
-            ppe.append("P2 RPE if residual dust exposure remains")
-    elif volatile and open_task:
-        ppe.append("Task-specific vapour RPE only if required by exposure/control assessment")
+    # Eaststone local respiratory-control rule:
+    # - QC uses the contained/extracted fume hood and does not use respirator masks.
+    # - Production/R&D use a full-face respirator where RPE is required.
+    # - A surgical mask is never treated as control of hazardous dust/vapour.
+    if airborne and area in {COSHHArea.PRODUCTION, COSHHArea.R_AND_D}:
+        filter_type = "powder filter" if powder and not volatile else "vapour filter" if volatile and not powder else "powder and/or vapour filter"
+        ppe.append(f"Full-face respirator with appropriate {filter_type}")
+    elif airborne and area != COSHHArea.QC:
+        ppe.append("Task-specific RPE if residual airborne exposure remains")
         review = True
 
     if profile == "SPILL":
@@ -215,7 +223,6 @@ def _ppe_and_controls(
         review = True
 
     return _dedupe(controls), _dedupe(ppe), review
-
 
 def _dedupe(values: list[str]) -> list[str]:
     result: list[str] = []
@@ -237,7 +244,7 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
     severity = _hazard_severity(research)
     powder = _powder_like(item, research)
     volatile = _volatile_like(research)
-    engineered = _has_engineering_controls(item)
+    site_engineered = _has_engineering_controls(item)
     activities: list[COSHHActivityAssessment] = []
     flags: list[str] = []
 
@@ -268,10 +275,16 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
             controls, ppe, task_review = _ppe_and_controls(
                 item,
                 research,
+                area=area,
                 profile=profile,
                 severity=severity,
                 powder=powder,
                 volatile=volatile,
+            )
+            engineered = site_engineered or (
+                area == COSHHArea.QC
+                and profile in {"OPEN_HANDLING", "CLEANING", "SPILL"}
+                and (powder or volatile)
             )
             residual = _residual_band(initial, engineered=engineered, contained=contained)
             if initial == RiskBand.HIGH and not engineered and not contained:
