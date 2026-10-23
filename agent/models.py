@@ -254,6 +254,10 @@ class COSHHResearch(StrictModel):
     signal_word: Literal["DANGER", "WARNING", "NONE", "UNKNOWN"]
     pictograms: list[GHSCode]
     hazard_statements: list[str]
+    relevant_health_effects: list[str] = Field(
+        default_factory=list,
+        description="Relevant acute/chronic health effects stated in SDS Section 2 and/or Section 11; do not infer beyond the SDS.",
+    )
     precautionary_statements: list[str]
     inhalation_hazard: bool
     skin_hazard: bool
