@@ -26,6 +26,7 @@ class Settings:
     openai_api_key: str
     openai_model: str
     template_path: Path
+    coshh_template_path: Path
     output_dir: Path
     database_path: Path
     default_assessment_performed_by: str
@@ -43,6 +44,12 @@ class Settings:
                 os.getenv(
                     "TEMPLATE_PATH",
                     "ES.SOP.272.F01.V02 - Material Hazard & Cleanability Screening Assessment.docx",
+                )
+            ),
+            coshh_template_path=_resolve_path(
+                os.getenv(
+                    "COSHH_TEMPLATE_PATH",
+                    "templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx",
                 )
             ),
             output_dir=_resolve_path(os.getenv("OUTPUT_DIR", "outputs")),
@@ -65,3 +72,5 @@ class Settings:
             )
         if not self.template_path.exists():
             raise FileNotFoundError(f"Assessment template not found: {self.template_path}")
+        if not self.coshh_template_path.exists():
+            raise FileNotFoundError(f"COSHH template not found: {self.coshh_template_path}")
