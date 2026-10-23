@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import re
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -105,8 +107,21 @@ def _text_content(sdt, value: object) -> None:
         text.text = line
 
 
+def _template_bytes(template_path: Path) -> bytes:
+    if template_path.exists():
+        return template_path.read_bytes()
+    parts_dir = template_path.parent / (template_path.name + ".b64")
+    parts = sorted(parts_dir.glob("part-*.b64"))
+    if not parts:
+        raise FileNotFoundError(
+            f"COSHH template not found: {template_path}; no embedded resource parts in {parts_dir}"
+        )
+    encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
+    return base64.b64decode(encoded)
+
+
 def _fill_tagged_template(template_path: Path, output_path: Path, values: dict[str, object]) -> None:
-    with ZipFile(template_path, "r") as source:
+    with ZipFile(BytesIO(_template_bytes(template_path)), "r") as source:
         files = {name: source.read(name) for name in source.namelist()}
 
     root = etree.fromstring(files["word/document.xml"])
