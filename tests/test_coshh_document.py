@@ -111,7 +111,12 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     for table in doc.tables:
         for row in table.rows:
             text += "\n" + " | ".join(cell.text for cell in row.cells)
-    assert "COSHH ASSESSMENT" in text
+    header_text = "\n".join(
+        paragraph.text
+        for section in doc.sections
+        for paragraph in section.header.paragraphs
+    )
+    assert "COSHH ASSESSMENT" in header_text.upper()
     assert "Miconazole nitrate" in text
     assert "H302" in text
     assert "Reviewed by" in text
