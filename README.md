@@ -70,29 +70,29 @@ If BNF still blocks capture, the scientific result remains in the research recor
 
 ## COSHH assessment
 
-COSHH is generated as a deliberately simple, visually consistent document rather than reproducing the old multi-page departmental form pack.
-
-The normal signed draft is designed around two concise pages:
+The COSHH module now populates Eaststone's approved-layout **ES.SOP.089.F01.V01 – COSHH Assessment** DOCX template rather than drawing its own standalone form. The template is a controlled, three-page form with 134 individually tagged fields and checkboxes. The immutable template resource lives at `templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx`; source document headers, hazard pictograms, PPE matrix, section structure, and human sign-off areas are retained.
 
 ### Page 1
 
-- substance and material/use context;
-- CAS number and selected SDS;
-- current GHS/CLP pictograms, signal word and H-statements;
-- exposure routes;
-- core controls;
-- people exposed, frequency/duration and quantity/scale context.
+- substance/product identity, CAS, process/use context and applicable personnel;
+- SDS details and current GB CLP pictogram selections;
+- H-code/statement wording and relevant health effects;
+- exposure routes and average exposure duration;
+- first aid and spill/environmental response.
 
 ### Page 2
 
-- activity-specific risk/control assessment for applicable Eaststone areas;
-- concise PPE/RPE requirements;
-- initial and residual risk;
-- first aid, spill response, storage and disposal;
-- SDS traceability;
-- blank human review/approval/signature/date fields.
+- departmental PPE matrix;
+- three concise task/activity assessment rows (full detailed assessment remains in `coshh_assessment.json`);
+- risk ratings, exposure monitoring and health-surveillance considerations;
+- storage and disposal.
 
-The detailed task-level assessment remains available in `coshh_assessment.json`; the signed Word document intentionally shows only the principal workplace activities to remain easy to read and review.
+### Page 3
+
+- conditions/restrictions, next review date and communication record;
+- blank human assessment, review and approval names, signatures and dates.
+
+The agent writes only tagged fields and preserves the template's page structure. It does not sign, approve or confirm control adequacy on behalf of an Eaststone reviewer.
 
 ### SDS-first research
 
@@ -136,7 +136,7 @@ Supported areas:
 
 Goods In specifically distinguishes checking/opening **outer packaging** from opening the primary material container. A hazardous powder therefore does not automatically trigger high-level respiratory PPE simply because a transit carton is opened.
 
-Activity risk combines intrinsic hazard severity with exposure potential. PPE is task-specific and does not replace engineering controls. Where significant open powder/vapour handling is identified but the actual local engineering controls have not been supplied, the draft remains flagged for human review rather than claiming an artificially low residual risk.
+Activity risk combines intrinsic hazard severity with exposure potential. PPE is task-specific and does not replace engineering controls. The Eaststone local rule uses a contained/extracted fume hood for QC airborne powder/vapour tasks, with no QC respirator selection. For Production/R&D, full-face respiratory protection with a task-appropriate powder and/or vapour filter is selected where airborne RPE is required; surgical masks are never accepted as airborne-hazard RPE. Where a relevant engineering or containment arrangement is unconfirmed, the draft flags it for human review rather than claiming control adequacy.
 
 ## Web interface
 
