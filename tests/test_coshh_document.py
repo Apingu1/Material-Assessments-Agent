@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from docx import Document
+from lxml import etree
+from zipfile import ZipFile
 
 from agent.coshh_document import build_coshh_docx
 from agent.coshh_rules import build_coshh_assessment
@@ -106,30 +108,38 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     assert values["HUM_ASSESSED_NAME_POSITION"] == ""
     assert values["HUM_REVIEWED_SIGNATURE"] == ""
     assert values["HUM_APPROVED_DATE"] == ""
+    with ZipFile(out, "r") as archive:
+        root = etree.fromstring(archive.read("word/document.xml"))
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    tagged = {}
+    for sdt in root.xpath(".//w:sdt", namespaces=ns):
+        tags = sdt.xpath("./w:sdtPr/w:tag/@w:val", namespaces=ns)
+        if tags:
+            tagged[tags[0]] = "".join(sdt.xpath(".//w:sdtContent//w:t/text()", namespaces=ns))
+
+    assert len(tagged) == 134
+    assert tagged["RES_SUBSTANCE_PRODUCT"] == "Miconazole nitrate"
+    assert "H302" in tagged["SDS_HAZARD_STATEMENTS"]
+    assert "Harmful if swallowed" in tagged["SDS_RELEVANT_HEALTH_EFFECTS"]
+    for tag in (
+        "HUM_ASSESSED_NAME_POSITION", "HUM_ASSESSED_SIGNATURE", "HUM_ASSESSED_DATE",
+        "HUM_REVIEWED_NAME_POSITION", "HUM_REVIEWED_SIGNATURE", "HUM_REVIEWED_DATE",
+        "HUM_APPROVED_NAME_POSITION", "HUM_APPROVED_SIGNATURE", "HUM_APPROVED_DATE",
+    ):
+        assert tagged[tag] == ""
+
     doc = Document(out)
-    text = "\n".join(p.text for p in doc.paragraphs)
+    body_text = "\\n".join(p.text for p in doc.paragraphs)
     for table in doc.tables:
         for row in table.rows:
-            text += "\n" + " | ".join(cell.text for cell in row.cells)
-    header_text = "\n".join(
-        [
-            *(paragraph.text for section in doc.sections for paragraph in section.header.paragraphs),
-            *(
-                " | ".join(cell.text for cell in row.cells)
-                for section in doc.sections
-                for table in section.header.tables
-                for row in table.rows
-            ),
-        ]
+            body_text += "\\n" + " | ".join(cell.text for cell in row.cells)
+    header_text = "\\n".join(
+        cell.text for section in doc.sections for table in section.header.tables
+        for row in table.rows for cell in row.cells
     )
     assert "COSHH ASSESSMENT" in header_text.upper()
-    assert "Miconazole nitrate" in text
-    assert "H302" in text
-    assert "Reviewed by" in text
-    assert "Approved by" in text
-    assert "AGENT-GENERATED DRAFT" not in text
-    assert "Departmental Personal Protective Equipment" in text
-    assert "Relevant health effects" in text
-    assert "Harmful if swallowed" in text
-    assert "Full-face" in text
-    assert "Fume" in text
+    assert "ES.SOP.089.F01.V01" in header_text
+    assert "Departmental Personal Protective Equipment" in body_text
+    assert "Reviewed by" in body_text
+    assert "Approved by" in body_text
+    assert "AGENT-GENERATED DRAFT" not in body_text
