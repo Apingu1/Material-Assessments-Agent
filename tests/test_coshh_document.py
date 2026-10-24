@@ -118,6 +118,7 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
             tagged[tags[0]] = "".join(sdt.xpath(".//w:sdtContent//w:t/text()", namespaces=ns))
 
     assert len(tagged) == 134
+    assert set(values) == set(tagged), "Every controlled content-control tag must be mapped exactly once"
     assert tagged["RES_SUBSTANCE_PRODUCT"] == "Miconazole nitrate"
     assert "H302" in tagged["SDS_HAZARD_STATEMENTS"]
     assert "Harmful if swallowed" in tagged["SDS_RELEVANT_HEALTH_EFFECTS"]
