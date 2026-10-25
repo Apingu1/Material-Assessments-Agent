@@ -16,7 +16,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-25-controlled-v5-coshh-only-retry"
+COSHH_ENGINE_BUILD = "2026-10-25-controlled-v6-queue-legacy-status-recovery"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -39,22 +39,48 @@ def _final_status(bundle) -> str:
 
 
 def _coshh_payload(output_dir: Path) -> dict:
+    """Read both new and legacy COSHH records without breaking the entire queue.
+
+    Earlier COSHH_STATUS.json files often omit stage, attempt count or even
+    the status JSON altogether. Never let one record hide every assessment.
+    """
+    defaults = {
+        "status": "FAILED",
+        "sds_status": "NOT_AVAILABLE",
+        "template_verified": False,
+        "template": "",
+        "error": "",
+        "stage": "",
+        "sds_attempt_count": 0,
+    }
     path = output_dir / "COSHH_STATUS.json"
-    if not path.exists():
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": "", "error": "COSHH generation did not complete."}
+    if not path.is_file():
+        return {**defaults, "error": "No COSHH status file is available for this assessment."}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("COSHH status must be a JSON object")
+        attempt_count = payload.get("sds_attempt_count")
+        try:
+            attempt_count = max(0, int(attempt_count or 0))
+        except (TypeError, ValueError, OverflowError):
+            attempt_count = 0
         return {
-            "status": str(payload.get("status") or "FAILED"),
-            "sds_status": str(payload.get("sds_status") or "NOT_AVAILABLE"),
-            "template_verified": bool(payload.get("template_verified", False)),
+            **defaults,
+            "status": str(payload.get("status") or defaults["status"]),
+            "sds_status": str(payload.get("sds_status") or defaults["sds_status"]),
+            "template_verified": payload.get("template_verified") is True,
             "template": str(payload.get("template") or ""),
             "error": str(payload.get("error") or ""),
             "stage": str(payload.get("stage") or ""),
-            "sds_attempt_count": int(payload.get("sds_attempt_count") or 0),
+            "sds_attempt_count": attempt_count,
         }
-    except Exception:
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": "", "error": "COSHH generation did not complete."}
+    except (OSError, ValueError, TypeError) as exc:
+        return {
+            **defaults,
+            "error": "The COSHH status record could not be read: "
+                     + type(exc).__name__ + ". Existing assessment files have not been deleted.",
+        }
 
 
 def _coshh_status(output_dir: Path) -> str:
@@ -149,16 +175,20 @@ def queue_rows() -> list[dict]:
         payload["coshh_error"] = ""
         payload["coshh_stage"] = ""
         payload["sds_attempt_count"] = 0
+        payload["worker_active"] = _worker_lock.locked()
+        payload["run_needs_status_check"] = (
+            payload.get("status") == "RESEARCHING" and not _worker_lock.locked()
+        )
         if row["output_dir"]:
             coshh = _coshh_payload(Path(row["output_dir"]).resolve())
-            payload["sds_status"] = coshh["sds_status"]
-            payload["coshh_template_verified"] = coshh["template_verified"]
-            payload["coshh_template"] = coshh["template"]
-            payload["coshh_error"] = coshh["error"]
-            payload["coshh_stage"] = coshh["stage"]
-            payload["sds_attempt_count"] = coshh["sds_attempt_count"]
-            if not payload.get("coshh_status") or payload["coshh_status"] == "RESEARCHING":
-                payload["coshh_status"] = coshh["status"]
+            payload["sds_status"] = coshh.get("sds_status", "NOT_AVAILABLE")
+            payload["coshh_template_verified"] = coshh.get("template_verified", False)
+            payload["coshh_template"] = coshh.get("template", "")
+            payload["coshh_error"] = coshh.get("error", "")
+            payload["coshh_stage"] = coshh.get("stage", "")
+            payload["sds_attempt_count"] = coshh.get("sds_attempt_count", 0)
+            if not payload.get("coshh_status"):
+                payload["coshh_status"] = coshh.get("status", "FAILED")
         result.append(payload)
     return result
 
@@ -388,7 +418,15 @@ const m=document.getElementById('material');m.addEventListener('input',()=>docum
 function note(t){document.getElementById('notice').textContent=t}
 function areas(){return [...document.querySelectorAll('#areas input:checked')].map(x=>x.value)}
 async function add(run){const body={material_name:m.value.trim(),dosage_forms:document.getElementById('dosage').value.trim(),routes:document.getElementById('route').value.trim(),product_context:document.getElementById('context').value.trim(),coshh_areas:areas(),people_exposed:document.getElementById('people').value.trim(),typical_quantity:document.getElementById('quantity').value.trim(),existing_controls:document.getElementById('controls').value.trim(),frequency:document.getElementById('frequency').value.trim(),duration:document.getElementById('duration').value.trim()};if(!body.material_name){note('Enter a material name.');return}if(!body.coshh_areas.length){note('Select at least one COSHH area.');return}const r=await fetch('/api/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok){note('Could not add material: '+await r.text());return}note('Material added to queue.');if(run)await runAll();await refresh()}
-async function runAll(){await fetch('/api/run',{method:'POST'});note('Pending assessments are being processed.');setTimeout(refresh,1000)}
+async function runAll(){
+ try {
+  const r=await fetch('/api/run',{method:'POST'});
+  if(!r.ok)throw new Error('HTTP '+r.status+': '+(await r.text()).slice(0,150));
+  const data=await r.json();
+  note(data.started?'Run request accepted. Check queue status below; an accepted request does not confirm completion.':'No run started: '+(data.detail||'worker already active'));
+ } catch(e) {note('Unable to start assessment: '+e.message);}
+ setTimeout(refresh,1000);
+}
 async function uploadCsv(){const f=document.getElementById('csv').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);const r=await fetch('/api/import-csv',{method:'POST',body:fd});const x=await r.json();note(r.ok?`${x.imported} material(s) imported.`:(x.detail||'Import failed.'));await refresh()}
 function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.cleaning_status||row.status)}</span>`;const b=`/api/download/${row.id}/`;return `<div class="status">${esc(row.cleaning_status||row.status)}</div><span class="links"><a href="${b}form">Form</a><a href="${b}dossier">Dossier</a><a href="${b}pdf">PDF</a><a href="${b}summary">Summary</a></span>`}
 function coshh(row){
@@ -421,7 +459,21 @@ async function uploadSds(id, input){
  const x=await r.json();note(r.ok?'SDS PDF saved unchanged. Click Rebuild COSHH only to extract and populate the form.':(x.detail||'SDS upload rejected.'));
  await refresh();
 }
-async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
+async function refresh(){
+const body=document.getElementById('rows');
+try{
+ const response=await fetch('/api/queue',{cache:'no-store'});
+ if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}
+ const data=await response.json();
+ if(!Array.isArray(data))throw new Error('Unexpected queue response');
+ body.innerHTML=data.map(x=>{
+   const warning=x.run_needs_status_check?'<div class="error">Previously marked RESEARCHING; no web worker currently detected. Check the saved record before starting another paid run.</div>':'';
+   return `<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span>${warning}</td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`;
+ }).join('')||'<tr><td colspan="5" class="muted">No assessments have been added to this queue database.</td></tr>';
+}catch(error){
+ body.innerHTML='<tr><td colspan="5" class="error">Assessment queue could not be loaded ('+esc(String(error.message))+'). This does not mean prior records have been deleted. Review server diagnostics; do not submit another paid run solely to restore the list.</td></tr>';
+}
+}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
 async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version',{cache:'no-store'});if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH: '+v.coshh_template+' ('+v.coshh_template_fields+' fields) | Loaded engine: '+(v.loaded_engine_build||'legacy')+' | Repository: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
 showBuild();refresh();setInterval(refresh,5000);

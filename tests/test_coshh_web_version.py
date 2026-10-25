@@ -30,3 +30,59 @@ def test_old_unverified_coshh_download_is_blocked(tmp_path, monkeypatch):
         web.download(100, "coshh")
     assert exc.value.status_code == 409
     assert "unverified" in exc.value.detail
+
+
+def test_legacy_coshh_status_without_stage_keeps_full_queue_visible(tmp_path, monkeypatch):
+    """Regression for real Codespaces KeyError: stage in /api/queue."""
+    import json
+    from agent.models import MaterialInput
+    from agent.queue import MaterialQueue
+    db = tmp_path / "data" / "agent.db"
+    outputs = tmp_path / "outputs"
+    outputs.mkdir()
+    queue = MaterialQueue(db)
+    before = queue.add(MaterialInput(material_name="Previous cleaning generation"))
+    current = queue.add(MaterialInput(material_name="Levomepromazine Maleate Powder"))
+    prevdir = outputs / "previous"
+    prevdir.mkdir()
+    # A historic assessment created before 'stage' metadata was introduced.
+    (prevdir / "COSHH_STATUS.json").write_text(
+        json.dumps({"status": "REVIEW_REQUIRED", "template_verified": True,
+                    "sds_status": "NOT_AVAILABLE"}), encoding="utf-8",
+    )
+    queue.update(before, "READY_FOR_REVIEW", str(prevdir),
+                 cleaning_status="READY_FOR_REVIEW", coshh_status="REVIEW_REQUIRED")
+    queue.update(current, "RESEARCHING", None,
+                 cleaning_status="RESEARCHING", coshh_status="RESEARCHING")
+    settings = SimpleNamespace(database_path=db)
+    monkeypatch.setattr(web, "_settings", lambda: settings)
+    records = web.queue_rows()
+    assert [x["id"] for x in records] == [current, before]
+    assert records[0]["material_name"] == "Levomepromazine Maleate Powder"
+    assert records[0]["status"] == "RESEARCHING"
+    assert records[1]["coshh_stage"] == ""
+    assert records[1]["sds_attempt_count"] == 0
+    assert records[1]["coshh_status"] == "REVIEW_REQUIRED"
+    assert len(queue.list_rows()) == 2  # Must not alter or delete queue records.
+
+
+def test_legacy_and_invalid_status_always_have_all_consumer_keys(tmp_path):
+    import json
+    old = tmp_path / "COSHH_STATUS.json"
+    for payload in [
+        {"status": "FAILED"},
+        {"status": "REVIEW_REQUIRED", "sds_status": "STORED_UNCHANGED"},
+        {"status": "FAILED", "sds_attempt_count": "not-an-integer"},
+        [],
+        "invalid",
+    ]:
+        old.write_text(json.dumps(payload), encoding="utf-8")
+        result = web._coshh_payload(tmp_path)
+        for key in ("status", "stage", "error", "template", "template_verified",
+                    "sds_status", "sds_attempt_count"):
+            assert key in result, (payload, key)
+        assert isinstance(result["sds_attempt_count"], int)
+    old.write_text("{invalid-json", encoding="utf-8")
+    assert web._coshh_payload(tmp_path)["stage"] == ""
+    old.unlink()
+    assert web._coshh_payload(tmp_path)["sds_status"] == "NOT_AVAILABLE"

@@ -144,6 +144,16 @@ Goods In specifically distinguishes checking/opening **outer packaging** from op
 
 Activity risk combines intrinsic hazard severity with exposure potential. PPE is task-specific and does not replace engineering controls. The Eaststone local rule uses a contained/extracted fume hood for QC airborne powder/vapour tasks, with no QC respirator selection. For Production/R&D, full-face respiratory protection with a task-appropriate powder and/or vapour filter is selected where airborne RPE is required; surgical masks are never accepted as airborne-hazard RPE. Where a relevant engineering or containment arrangement is unconfirmed, the draft flags it for human review rather than claiming control adequacy.
 
+## Compatibility with older COSHH queue records
+
+The queue reader tolerates legacy `COSHH_STATUS.json` files lacking `stage`,
+`sds_attempt_count` and other fields. A bad COSHH status cannot hide the
+Cleaning Validation queue. The UI shows an explicit server error instead of
+silently presenting an empty assessment list. Records already in SQLite are
+not modified by this compatibility fix. A `RESEARCHING` record without a
+detected web worker is highlighted for checking rather than automatically
+restarted (which could repeat paid research).
+
 ## Web interface
 
 Start the local UI:
