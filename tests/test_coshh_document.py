@@ -147,3 +147,58 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     assert "Reviewed by" in body_text
     assert "Approved by" in body_text
     assert "AGENT-GENERATED DRAFT" not in body_text
+
+
+
+def test_coshh_only_rebuild_populates_exact_controlled_template_offline(tmp_path, monkeypatch):
+    """End-to-end render using a saved SDS and cached research; no OpenAI call."""
+    from types import SimpleNamespace
+    import fitz
+    from agent import coshh_recovery
+
+    material = MaterialInput(
+        material_name="Miconazole nitrate Powder", dosage_forms="Tablets", routes="Oral",
+        coshh_areas=[COSHHArea.QC, COSHHArea.PRODUCTION],
+    )
+    cached = SimpleNamespace(
+        material_input=material,
+        identity=SimpleNamespace(
+            chemical_identity="Miconazole nitrate",
+            active_moiety="Miconazole",
+        ),
+        coshh=_research(),
+        model_dump_json=lambda indent=2: '{"recovered": true}',
+    )
+    monkeypatch.setattr(coshh_recovery, "load_existing_bundle", lambda _: cached)
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((40, 50), "Safety Data Sheet - Miconazole nitrate CAS 22832-87-7")
+    payload = pdf.tobytes()
+    pdf.close()
+    coshh_recovery.upload_sds_for_existing_run(tmp_path, payload, "original.pdf")
+
+    class OfflineResearcher:
+        def __init__(self, settings):
+            pass
+
+        def research_coshh_from_verified_pdf(self, item, identity, stored_sds, *, reference):
+            assert stored_sds.sha256
+            assert Path(stored_sds.local_path).read_bytes() == payload
+            assert reference is True
+            return _research()
+
+    monkeypatch.setattr(coshh_recovery, "ResearchAgent", OfflineResearcher)
+    settings = SimpleNamespace(
+        require_runtime=lambda: None,
+        coshh_template_path=Path(__file__).resolve().parents[1] / "templates" /
+            "ES.SOP.089.F01.V01 - COSHH Assessment.docx",
+        generate_pdf=False,
+    )
+    result = coshh_recovery.regenerate_coshh_only(settings, tmp_path)
+    assert result["status"] == "REVIEW_REQUIRED", result
+    assert result["template_verified"] is True
+    assert result["sds_status"] == "STORED_UNCHANGED"
+    output = next(tmp_path.glob("*COSHH Assessment - DRAFT.docx"))
+    verified = verify_generated_coshh_document(output, settings.coshh_template_path)
+    assert verified["template_sha256"] == result["template_sha256"]
+    assert (tmp_path / "coshh_assessment.json").exists()

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import re
 from datetime import datetime
 from io import BytesIO
@@ -108,16 +107,10 @@ def _text_content(sdt, value: object) -> None:
 
 
 def _template_bytes(template_path: Path) -> bytes:
-    if template_path.exists():
-        return template_path.read_bytes()
-    parts_dir = template_path.parent / (template_path.name + ".b64")
-    parts = sorted(parts_dir.glob("part-*.b64"))
-    if not parts:
-        raise FileNotFoundError(
-            f"COSHH template not found: {template_path}; no embedded resource parts in {parts_dir}"
-        )
-    encoded = "".join(part.read_text(encoding="ascii").strip() for part in parts)
-    return base64.b64decode(encoded)
+    """Load only the controlled binary DOCX; never use an alternative form."""
+    if not template_path.is_file():
+        raise FileNotFoundError(f"Controlled COSHH Word form not found: {template_path}")
+    return template_path.read_bytes()
 
 
 def _fill_tagged_template(template_path: Path, output_path: Path, values: dict[str, object]) -> None:

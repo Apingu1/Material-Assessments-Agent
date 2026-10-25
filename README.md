@@ -104,11 +104,11 @@ The COSHH researcher seeks one strong SDS first, preferring:
 
 A different salt/base form or mixture cannot silently substitute for the assessed substance. A non-supplier SDS is explicitly recorded as a **reference SDS** and flagged for verification before approval.
 
-SDS searching now strips incoming presentations (e.g. "Powder", "Tablets", dose, "Oral") and prioritises the actual chemical/salt, with the base moiety as a flagged reference option. A verified British Pharmacopoeia/MHRA Levomepromazine Maleate SDS (CAS 7104-38-3) is included as a deterministic reference fallback for that test substance. If the initial SDS URL cannot be downloaded as an identity-relevant SDS PDF, the downloader checks other SDS links and embedded viewer URLs, then performs up to three additional web-search passes (manufacturer, established distributor, other reputable exact-substance SDS sources). When a substitute SDS is downloaded, the agent re-extracts the hazard package from the saved PDF itself before producing a COSHH document. Each alternative search regenerates the COSHH research from its newly selected SDS rather than mixing suppliers' hazard statements. The record includes every attempted URL and its failure reason in `sds/SDS_METADATA.json`; it does **not** silently substitute a different CAS or salt. No source being found remains a human-review gap, not an approved assessment.
+SDS searching strips incoming presentations (e.g. "Powder", "Tablets", dose, "Oral") and prioritises the actual chemical/salt, with the base moiety as a flagged reference option. A confirmed British Pharmacopoeia/MHRA Levomepromazine Maleate reference SDS (CAS 7104-38-3) is checked by direct HTTP **before any paid COSHH research**. If it is blocked, supplier SDS links and embedded viewers are attempted, followed by a cost-limited manufacturer/distributor research pass (`COSHH_MAX_RESCUE_SEARCHES=1` by default). When a substitute SDS is downloaded, the agent re-extracts the hazard package from the saved PDF itself before producing a COSHH document. Each alternative search regenerates the COSHH research from its newly selected SDS rather than mixing suppliers' hazard statements. The record includes every attempted URL and its failure reason in `sds/SDS_METADATA.json`; it does **not** silently substitute a different CAS or salt. No source being found remains a human-review gap, not an approved assessment.
 
-Every new assessment runs in its own unique output directory to prevent old COSHH DOCX files with the same material name being served inadvertently. The generated document must retain the controlled form's 134 tags, headers and Word styles, and `COSHH_STATUS.json` records both the original template checksum and output checksum. Older unchecked assessments are visibly flagged in the web UI; rerun them to generate a new controlled document.
+Every new assessment runs in its own unique output directory to prevent old COSHH DOCX files with the same material name being served inadvertently. The generated document must retain the controlled form's 134 tags, headers and Word styles, and `COSHH_STATUS.json` records both the original template checksum and output checksum. Previous unsuccessful assessments are labelled with their actual COSHH generation error, rather than being described as old-format documents. A COSHH-only rebuild can use the previously completed Cleaning Validation research, without repeating paid Cleaning Validation queries.
 
-The controlled 134-field template is now mandatory: startup rejects absent/mismatched templates, and the old programmatically drawn COSHH form is disabled. After switching branches, **restart the existing Codespaces Python web server** to load the updated code. Use `python -m agent.cli check` to verify both templates.
+The controlled 134-field template is mandatory: startup rejects absent/mismatched templates, and the old programmatically drawn COSHH form has been removed. The form is always read as the exact binary DOCX at `templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx` (no embedded resource copies or template substitution). After switching branches, **restart the existing Codespaces Python web server** to load the updated code. Use `python -m agent.cli check` to verify both templates.
 
 The agent also checks whether a GB Workplace Exposure Limit is identified and considers whether health surveillance may require human review.
 
@@ -167,6 +167,9 @@ The interface now separates the two outputs:
 - COSHH PDF;
 - review summary;
 - original SDS `View` / `Download` actions;
+- `Attach SDS PDF` for a blocked SDS source, preserving the uploaded original;
+- `Rebuild COSHH only` from saved Cleaning Validation work (no Cleaning Validation repeat; one PDF-specific extraction call if an SDS is available);
+- COSHH error/SDS download-attempt diagnostics, and a no-AI download of the approved Word master;
 - COSHH JSON record.
 
 The input screen also allows the operator to select applicable COSHH areas and supply:
@@ -245,7 +248,7 @@ CSV may additionally contain:
 
 ## Output folder
 
-Each material receives a folder under `outputs/` containing the Cleaning Validation outputs plus, where COSHH generation succeeds:
+Each individual assessment receives a unique folder under `outputs/<material>/<run-id>/`, preventing an old Word form from being mistaken for a new COSHH draft. The folder contains the Cleaning Validation outputs plus, where COSHH generation succeeds:
 
 - `* - COSHH Assessment - DRAFT.docx`;
 - optional COSHH PDF;
