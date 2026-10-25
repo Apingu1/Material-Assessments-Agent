@@ -6,7 +6,7 @@ from zipfile import ZipFile
 
 from agent.coshh_document import build_coshh_docx
 from agent.coshh_rules import build_coshh_assessment
-from agent.coshh_template import build_coshh_template_values
+from agent.coshh_template import build_coshh_template_values, verify_generated_coshh_document
 from agent.models import (
     COSHHArea,
     COSHHResearch,
@@ -100,6 +100,9 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
     build_coshh_docx(assessment, item, stored, out, template_path=template)
     assert out.exists()
+    verification = verify_generated_coshh_document(out, template)
+    assert len(verification["template_sha256"]) == 64
+    assert len(verification["output_docx_sha256"]) == 64
 
     values = build_coshh_template_values(assessment, item, stored)
     assert values["DER_PPE_QC_FUME_HOOD"] is True

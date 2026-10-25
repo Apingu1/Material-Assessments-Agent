@@ -34,6 +34,12 @@ def _slug(value: str) -> str:
     return value or "material"
 
 
+def _new_run_directory(output_dir: Path, material_name: str) -> Path:
+    """New folder for every run, even when material names are identical."""
+    run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:10]
+    return output_dir / _slug(material_name) / run_id
+
+
 def _issue_date() -> str:
     return datetime.now().strftime("%d%b%y").upper()
 
@@ -307,10 +313,9 @@ class AssessmentPipeline:
         bundle = self.researcher.research(item)
         bundle.scoring = calculate_scoring(bundle.hazard, bundle.potency, bundle.cleanability)
 
-        # A fresh output directory per run prevents older files for this same
-        # material being returned by the web download glob.
-        run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:10]
-        material_dir = self.settings.output_dir / _slug(item.material_name) / run_id
+        # Never serve files from a previous assessment for the same material.
+        material_dir = _new_run_directory(self.settings.output_dir, item.material_name)
+        run_id = material_dir.name
         evidence_dir = material_dir / "evidence"
         material_dir.mkdir(parents=True, exist_ok=True)
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -587,7 +592,15 @@ class AssessmentPipeline:
         except Exception as exc:
             message = str(exc)[:2000]
             (material_dir / "COSHH_ERROR.txt").write_text(message, encoding="utf-8")
-            coshh_status = {"status": "FAILED", "error": message}
+            coshh_status = {
+                "status": "FAILED",
+                "error": message,
+                "sds_status": (
+                    stored_sds.status if "stored_sds" in locals() else "NOT_AVAILABLE"
+                ),
+                "template_verified": False,
+                "run_id": run_id,
+            }
 
         (material_dir / "COSHH_STATUS.json").write_text(
             json.dumps(coshh_status, indent=2, ensure_ascii=False), encoding="utf-8"

@@ -15,6 +15,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
+COSHH_ENGINE_BUILD = "2026-10-25-controlled-v3-run-isolation-sds-substance"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -111,6 +112,9 @@ def version() -> dict:
         git_head = "unknown"
     return {
         "commit": git_head,
+        "loaded_engine_build": COSHH_ENGINE_BUILD,
+        "coshh_template_path": str(settings.coshh_template_path),
+        "cleaning_template_path": str(settings.template_path),
         "coshh_template": settings.coshh_template_path.name,
         "coshh_template_fields": 134,
         "legacy_coshh_renderer": False,
@@ -265,6 +269,6 @@ function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.c
 function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;let links=(verified?`<a href="${b}coshh">COSHH V01 (verified)</a><a href="${b}coshh_pdf">PDF</a>`:`<span class="error">Old/unchecked COSHH output — rerun for controlled form.</span> `)+`<a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
 async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
-async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version');if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH form: '+v.coshh_template+' ('+v.coshh_template_fields+' mapped fields) | Running code: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
+async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version',{cache:'no-store'});if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH: '+v.coshh_template+' ('+v.coshh_template_fields+' fields) | Loaded engine: '+(v.loaded_engine_build||'legacy')+' | Repository: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
 showBuild();refresh();setInterval(refresh,5000);
 </script></body></html>'''

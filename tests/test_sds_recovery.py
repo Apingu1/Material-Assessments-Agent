@@ -8,7 +8,7 @@ import pytest
 from agent.coshh_document import build_coshh_docx
 from agent.coshh_template import validate_coshh_template
 from agent.prompts import coshh_rescue_prompt
-from agent.sds import SDSStore
+from agent.sds import SDSStore, _valid_sds_pdf, sds_search_names, known_authoritative_sds_urls
 
 
 def _sds_pdf(title="Safety Data Sheet - Miconazole nitrate CAS 22832-87-7"):
@@ -95,3 +95,60 @@ def test_sds_rescue_prompt_avoids_previously_failed_urls():
     assert "NEW, independent web search" in prompt
     assert "https://example.org/failed-sds" in prompt
     assert "different" in prompt.lower()
+
+
+def test_levomepromazine_sds_uses_chemical_without_powder_tablet_route():
+    names = sds_search_names(
+        "Levomepromazine Maleate Powder",
+        "Levomepromazine Maleate",
+        "Levomepromazine",
+    )
+    assert names == ["levomepromazine maleate", "levomepromazine"]
+    urls = known_authoritative_sds_urls(names)
+    assert urls and urls[0].endswith("/CAT-723_GB.pdf")
+
+
+def test_reject_wrong_salt_for_regulator_reference():
+    assert not known_authoritative_sds_urls(
+        ["levomepromazine hydrochloride", "levomepromazine"]
+    )
+
+
+def test_levomepromazine_pdf_accepts_powder_input_and_base_reference_name():
+    data = _sds_pdf("Safety Data Sheet - Levomepromazine maleate CAS 7104-38-3")
+    assert _valid_sds_pdf(
+        data, "Levomepromazine Maleate Powder", "7104-38-3",
+        acceptable_names=["Levomepromazine maleate", "Levomepromazine"],
+    )[0]
+    base_data = _sds_pdf("Safety Data Sheet - Levomepromazine")
+    ok, reason = _valid_sds_pdf(
+        base_data, "Levomepromazine Maleate Powder", "",
+        acceptable_names=["Levomepromazine"],
+    )
+    assert ok and reason == "NAME_MATCH:levomepromazine"
+
+
+def test_official_reference_sds_url_retrieval_is_recorded(tmp_path, monkeypatch):
+    expected = known_authoritative_sds_urls(["levomepromazine maleate"])[0]
+    data = _sds_pdf("Safety Data Sheet - Levomepromazine maleate CAS 7104-38-3")
+    real_client = httpx.Client
+    def handler(request):
+        if str(request.url) == expected:
+            return httpx.Response(200, content=data, headers={"content-type":"application/pdf"})
+        return httpx.Response(404)
+    monkeypatch.setattr(
+        httpx, "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw),
+    )
+    original = _research("")
+    original.coshh_substance_name = "Levomepromazine Maleate"
+    original.sds.substance_name = "Levomepromazine Maleate Powder"
+    original.sds.cas_number = "7104-38-3"
+    result = SDSStore().acquire(
+        original, tmp_path, extra_urls=[expected],
+        acceptable_names=["levomepromazine maleate","levomepromazine"],
+    )
+    assert result.status == "STORED_UNCHANGED"
+    assert result.resolved_pdf_url == expected
+    assert result.identity_match == "CAS_MATCH"
+    assert Path(result.local_path).read_bytes() == data

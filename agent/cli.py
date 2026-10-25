@@ -101,7 +101,8 @@ def check() -> None:
     console.print(f"Model: {settings.openai_model}")
     console.print("OpenAI key: " + ("configured" if settings.openai_api_key else "NOT configured"))
     console.print(f"Evidence capture: {settings.capture_evidence}")
-    console.print(f"COSHH controlled template: {settings.coshh_template_path.name}")
+    console.print(f"COSHH controlled template: {settings.coshh_template_path.resolve()}")
+    console.print(f"Cleaning assessment template: {settings.template_path.resolve()}")
     from .coshh_template import validate_coshh_template
     validate_coshh_template(settings.coshh_template_path)
     console.print("[green]COSHH template: valid (134 mapped fields)[/green]")

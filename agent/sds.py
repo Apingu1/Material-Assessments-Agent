@@ -87,7 +87,11 @@ def known_authoritative_sds_urls(names: list[str]) -> list[str]:
 
     Registry is deliberately small: never generate guessed regulator PDF URLs.
     """
-    if any(re.search(r"\blevomepromazine(?:\s+maleate)?\b", name, re.I) for name in names):
+    identified = [name.strip().lower() for name in names]
+    # Do not substitute maleate for a differently specified salt/mixture.
+    if any(name.startswith("levomepromazine ") and name != "levomepromazine maleate" for name in identified):
+        return []
+    if "levomepromazine maleate" in identified or "levomepromazine" in identified:
         return [
             "https://www.pharmacopoeia.com/content/file/products/healthandsafety/CAT-723_GB.pdf",
             "https://www.pharmacopoeia.tso.co.uk/content/file/products/healthandsafety/CAT-723_GB.pdf",
