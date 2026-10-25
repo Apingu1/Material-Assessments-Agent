@@ -207,6 +207,23 @@ def download(material_id: int, kind: str):
     pattern = patterns.get(kind)
     if not pattern:
         raise HTTPException(status_code=404, detail="Unknown download type.")
+    if kind in {"coshh", "coshh_pdf"}:
+        output_dir = _output_dir(material_id)
+        status = _coshh_payload(output_dir)
+        if not status["template_verified"]:
+            raise HTTPException(
+                status_code=409,
+                detail="This is an older or unverified COSHH form. Generate a new "
+                "assessment to use the controlled ES.SOP.089.F01.V01 template.",
+            )
+        from .coshh_template import verify_generated_coshh_document
+        docx_files = list(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
+        if len(docx_files) != 1:
+            raise HTTPException(status_code=409, detail="Ambiguous or missing controlled COSHH document.")
+        try:
+            verify_generated_coshh_document(docx_files[0], _settings().coshh_template_path)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=409, detail=f"Controlled COSHH form verification failed: {exc}") from exc
     path = _match_output(material_id, pattern)
     return FileResponse(path, filename=path.name)
 
