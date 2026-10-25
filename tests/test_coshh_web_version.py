@@ -7,7 +7,10 @@ from agent import web
 def test_running_server_reports_controlled_template_and_no_legacy_renderer(monkeypatch):
     monkeypatch.setattr(
         web, "_settings",
-        lambda: SimpleNamespace(coshh_template_path=Path("templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx")),
+        lambda: SimpleNamespace(
+            coshh_template_path=Path("templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx"),
+            template_path=Path("ES.SOP.272.F01.V02 - Material Hazard & Cleanability Screening Assessment.docx"),
+        ),
     )
     result = web.version()
     assert result["coshh_template"] == "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
