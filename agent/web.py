@@ -39,15 +39,17 @@ def _final_status(bundle) -> str:
 def _coshh_payload(output_dir: Path) -> dict:
     path = output_dir / "COSHH_STATUS.json"
     if not path.exists():
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE"}
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": ""}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return {
             "status": str(payload.get("status") or "FAILED"),
             "sds_status": str(payload.get("sds_status") or "NOT_AVAILABLE"),
+            "template_verified": bool(payload.get("template_verified", False)),
+            "template": str(payload.get("template") or ""),
         }
     except Exception:
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE"}
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": ""}
 
 
 def _coshh_status(output_dir: Path) -> str:
@@ -123,9 +125,13 @@ def queue_rows() -> list[dict]:
     for row in queue.list_rows():
         payload = dict(row)
         payload["sds_status"] = "NOT_AVAILABLE"
+        payload["coshh_template_verified"] = False
+        payload["coshh_template"] = ""
         if row["output_dir"]:
             coshh = _coshh_payload(Path(row["output_dir"]).resolve())
             payload["sds_status"] = coshh["sds_status"]
+            payload["coshh_template_verified"] = coshh["template_verified"]
+            payload["coshh_template"] = coshh["template"]
             if not payload.get("coshh_status") or payload["coshh_status"] == "RESEARCHING":
                 payload["coshh_status"] = coshh["status"]
         result.append(payload)
@@ -256,7 +262,7 @@ async function add(run){const body={material_name:m.value.trim(),dosage_forms:do
 async function runAll(){await fetch('/api/run',{method:'POST'});note('Pending assessments are being processed.');setTimeout(refresh,1000)}
 async function uploadCsv(){const f=document.getElementById('csv').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);const r=await fetch('/api/import-csv',{method:'POST',body:fd});const x=await r.json();note(r.ok?`${x.imported} material(s) imported.`:(x.detail||'Import failed.'));await refresh()}
 function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.cleaning_status||row.status)}</span>`;const b=`/api/download/${row.id}/`;return `<div class="status">${esc(row.cleaning_status||row.status)}</div><span class="links"><a href="${b}form">Form</a><a href="${b}dossier">Dossier</a><a href="${b}pdf">PDF</a><a href="${b}summary">Summary</a></span>`}
-function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;let links=`<a href="${b}coshh">COSHH</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
+function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;let links=(verified?`<a href="${b}coshh">COSHH V01 (verified)</a><a href="${b}coshh_pdf">PDF</a>`:`<span class="error">Old/unchecked COSHH output — rerun for controlled form.</span> `)+`<a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
 async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
 async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version');if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH form: '+v.coshh_template+' ('+v.coshh_template_fields+' mapped fields) | Running code: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}

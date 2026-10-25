@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 
 from .config import Settings
@@ -306,7 +307,10 @@ class AssessmentPipeline:
         bundle = self.researcher.research(item)
         bundle.scoring = calculate_scoring(bundle.hazard, bundle.potency, bundle.cleanability)
 
-        material_dir = self.settings.output_dir / _slug(item.material_name)
+        # A fresh output directory per run prevents older files for this same
+        # material being returned by the web download glob.
+        run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:10]
+        material_dir = self.settings.output_dir / _slug(item.material_name) / run_id
         evidence_dir = material_dir / "evidence"
         material_dir.mkdir(parents=True, exist_ok=True)
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -512,6 +516,10 @@ class AssessmentPipeline:
                 coshh_docx,
                 template_path=self.settings.coshh_template_path,
             )
+            from .coshh_template import verify_generated_coshh_document
+            coshh_verification = verify_generated_coshh_document(
+                coshh_docx, self.settings.coshh_template_path
+            )
             if self.settings.generate_pdf:
                 convert_docx_to_pdf(coshh_docx, material_dir)
             (material_dir / "COSHH_REVIEW_SUMMARY.txt").write_text(
@@ -525,6 +533,10 @@ class AssessmentPipeline:
                 "template": self.settings.coshh_template_path.name,
                 "sds_source_lane": selected_lane,
                 "sds_attempt_count": len(stored_sds.attempts),
+                "run_id": run_id,
+                "template_verified": True,
+                "template_sha256": coshh_verification["template_sha256"],
+                "output_docx_sha256": coshh_verification["output_docx_sha256"],
             }
         except Exception as exc:
             message = str(exc)[:2000]

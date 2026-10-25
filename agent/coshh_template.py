@@ -167,6 +167,30 @@ def validate_coshh_template(template_path: Path) -> None:
         )
 
 
+def verify_generated_coshh_document(output_path: Path, template_path: Path) -> dict[str, str]:
+    """Verify the output is populated from the actual controlled DOCX resource."""
+    validate_coshh_template(template_path)
+    template_data = _template_bytes(template_path)
+    output_data = output_path.read_bytes()
+    with ZipFile(BytesIO(template_data)) as source, ZipFile(BytesIO(output_data)) as output:
+        for required in ("word/styles.xml", "word/document.xml", "word/header1.xml"):
+            if required not in output.namelist() or required not in source.namelist():
+                raise ValueError(f"COSHH output missing controlled package part {required}")
+        root = etree.fromstring(output.read("word/document.xml"))
+        tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
+        if len(tags) != 134:
+            raise ValueError(f"Generated COSHH output is not the controlled form: {len(tags)} tags")
+        if output.read("word/styles.xml") != source.read("word/styles.xml"):
+            raise ValueError("Generated COSHH style part differs from the controlled template")
+        if output.read("word/header1.xml") != source.read("word/header1.xml"):
+            raise ValueError("Generated COSHH header differs from the controlled template")
+    from hashlib import sha256
+    return {
+        "template_sha256": sha256(template_data).hexdigest(),
+        "output_docx_sha256": sha256(output_data).hexdigest(),
+    }
+
+
 def _physical_form_flags(value: str) -> dict[str, bool]:
     text = _normalise(value).lower()
     powder = any(token in text for token in ("powder", "dust", "micronised", "micronized"))
