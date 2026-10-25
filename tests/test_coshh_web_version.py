@@ -29,4 +29,4 @@ def test_old_unverified_coshh_download_is_blocked(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         web.download(100, "coshh")
     assert exc.value.status_code == 409
-    assert "older or unverified" in exc.value.detail
+    assert "unverified" in exc.value.detail

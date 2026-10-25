@@ -1,103 +1,59 @@
-# COSHH Assessment Design
+# COSHH module — controlled-template and recovery design
 
-## Purpose
+## Controlled document (only supported rendering path)
+`agent/coshh_document.py` calls the tagged-template filler in `agent/coshh_template.py`.
+No legacy programmatically assembled COSHH document remains. The exact Word resource:
+`templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx` has 134 individually
+tagged content controls. Startup validates them; generating a Word form validates
+the output against the master header, styles and the 134 tags. The human
+review/approval names, dates, signoffs and adequacy decision stay blank.
 
-The COSHH module converts the historical Eaststone paper COSHH concept into an agent-friendly workflow while preserving the purpose of a COSHH assessment: identify hazardous substances, evaluate how people may be exposed during actual work, define suitable controls, and document the outcome for human review and approval.
+The Cleaning Validation form `ES.SOP.272.F01.V02 - Material Hazard &
+Cleanability Screening Assessment.docx` remains independent and unchanged.
+Every run has a unique output directory, so no earlier COSHH form may be
+returned in place of the current one.
 
-The original Eaststone COSHH templates used one hazard sheet plus multiple area-specific PPE sheets. The redesigned module keeps the same conceptual separation internally but renders a much simpler signed draft.
+## SDS identity and source matching
+Use incoming material to define the actual substance and physical exposure,
+not to restrict SDS searches by presentation, strength, dosage form or route.
+For `Levomepromazine Maleate Powder` the substance SDS query is
+`levomepromazine maleate`, CAS `7104-38-3`, with `levomepromazine` as a
+review-required base-moiety fallback. Do not silently substitute a different
+salt, excipient blend, or manufactured dosage form. A third-party SDS is a
+reference and requires actual site-supplier verification.
 
-## Source hierarchy
+A deterministic official British Pharmacopoeia SDS URL is checked with HTTP
+and PDF identity/readability validation **before** paid COSHH web research.
+If it succeeds, the complete downloaded PDF text is provided to a single
+COSHH-only structured extraction call with the web-search tool disabled.
+If it fails, normal SDS research may try the initial URL, linked supplier PDFs,
+and limited alternative searches. `COSHH_MAX_RESCUE_SEARCHES` defaults to 1 to
+avoid burning API credits across repeated blocked supplier websites.
 
-COSHH factual research is SDS-first.
+## No-cost troubleshooting and controlled restart
+`GET /api/templates/coshh` returns the unmodified master template without AI.
+`GET /api/coshh/{id}/diagnostics` exposes the actual generation error and
+recorded SDS HTTP attempts; the UI never describes an absent form as an "old
+form". Download of an unverified generated COSHH remains blocked.
 
-1. Current actual Eaststone supplier/manufacturer SDS where identifiable.
-2. Manufacturer SDS for the exact chemical species/CAS.
-3. Major recognised chemical supplier SDS for the exact chemical species/CAS.
-4. Additional authoritative UK evidence only where needed for workplace exposure limits, health-surveillance considerations or current hazard corroboration.
+The original SDS may be attached with
+`POST /api/coshh/{id}/sds` (multipart file). The app checks PDF structure,
+readability, candidate substance identity and size, preserves the original
+bytes and SHA-256, and records the provenance as USER_UPLOAD.
+Upload alone does NOT approve the document or consume an AI call.
 
-A reference SDS is not presented as though it were the actual supplier SDS.
+`POST /api/coshh/{id}/retry` rebuilds COSHH **only** from that row's
+`assessment.json` (the paid Cleaning Validation work is not repeated).
+If no acceptable SDS can be found, the preflight fails with no AI usage.
+Otherwise one PDF-grounded extraction call runs, followed by deterministic
+activity/PPE assessment, controlled Word filling and structural verification.
+Any failure is recorded in `COSHH_ERROR.txt` and
+`COSHH_STATUS.json` without marking the Cleaning Validation report failed.
 
-## Substance name vs material context
-
-The Cleaning Validation form retains the exact controlled material name.
-
-COSHH normally uses the underlying hazardous substance name. The exact Eaststone starting material and handling context remain visible separately.
-
-Example:
-
-- controlled material: `Haloperidol 10 mg Tablets`;
-- COSHH substance: `Haloperidol`;
-- use context: tablets used as a starting material and crushed/manipulated during manufacture.
-
-This prevents a tablet-use COSHH from being silently treated as equivalent to a pure API powder assessment.
-
-## Intrinsic hazard vs workplace exposure
-
-The agent separates two questions:
-
-1. **What can the substance do?** - answered principally by the SDS/classification evidence.
-2. **How can Eaststone staff be exposed during this task?** - answered by selected area/activity profiles plus operator-supplied workplace context.
-
-The model is therefore not permitted to invent Eaststone LEV, booths, isolators, quantities, frequency or duration.
-
-## Supported areas
-
-- Goods In / Warehouse
-- Sampling
-- QC
-- Production
-- R&D
-- Housekeeping
-- Office
-
-The detailed JSON retains the full activity assessment. The Word draft shows the principal decision-relevant activities only so the form remains concise.
-
-## Goods In logic
-
-Checking/opening **outer packaging** is treated as contained handling unless the package is damaged/leaking. Opening a transit carton is not treated as opening the primary material container.
-
-Spill response is assessed separately as a foreseeable abnormal exposure.
-
-## Risk logic
-
-Initial risk is derived from:
-
-`intrinsic hazard severity x activity exposure potential`
-
-Residual risk considers whether the activity is contained and whether the operator supplied a recognisable engineering/containment control.
-
-PPE is task-specific. Respiratory protection is not used as a substitute for engineering control. High-concern open powder/vapour tasks remain flagged for human review if the actual control arrangement has not been supplied.
-
-## Health surveillance
-
-The research step records whether health surveillance has been considered and whether the evidence suggests that a human reviewer should assess the need for surveillance. The agent does not make a final occupational-health decision.
-
-## SDS preservation
-
-The SDS PDF is stored separately and unchanged. No annotations, highlights, page extraction or re-saving are applied to the original document. SHA-256 is recorded to support integrity/traceability.
-
-## Document design
-
-The signed draft is intentionally simple.
-
-### Page 1
-
-- substance and assessment scope;
-- SDS identity;
-- GHS pictograms / H-statements;
-- exposure routes;
-- core controls.
-
-### Page 2
-
-- compact activity/control/PPE table;
-- initial/residual risk;
-- first aid, spillage, storage and disposal;
-- SDS traceability;
-- blank reviewer/approver/signature/date fields.
-
-Long or unusual cases may flow beyond two pages rather than clipping content.
-
-## Approval boundary
-
-All outputs are marked as draft. Reviewer/approver names, signatures and dates are deliberately not populated by the agent. Approval remains a human process.
+## Departmental controls and approval
+QC airborne handling uses the contained, externally extracted fume hood;
+Production/R&D use appropriate full-face respirators where required. The
+fume hood remains in the controlled form's PPE matrix by Eaststone convention.
+The form retains all 9 current GB CLP pictogram options. All results are
+drafts, require appropriate review, and must be checked against the site
+supplier SDS and actual work activity before approval.

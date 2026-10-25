@@ -103,6 +103,17 @@ def home() -> str:
     return HTML
 
 
+@app.get("/api/templates/coshh")
+def controlled_coshh_template():
+    """Download the unmodified approved COSHH template without any API calls."""
+    settings = _settings()
+    return FileResponse(
+        settings.coshh_template_path,
+        filename=settings.coshh_template_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
 @app.get("/api/version")
 def version() -> dict:
     """Identify the actual code and controlled COSHH template of this running process."""
@@ -135,6 +146,9 @@ def queue_rows() -> list[dict]:
         payload["sds_status"] = "NOT_AVAILABLE"
         payload["coshh_template_verified"] = False
         payload["coshh_template"] = ""
+        payload["coshh_error"] = ""
+        payload["coshh_stage"] = ""
+        payload["sds_attempt_count"] = 0
         if row["output_dir"]:
             coshh = _coshh_payload(Path(row["output_dir"]).resolve())
             payload["sds_status"] = coshh["sds_status"]
@@ -305,7 +319,7 @@ def download(material_id: int, kind: str):
             detail = (
                 "COSHH generation failed or has not completed; no verified document "
                 "is available. " + (status.get("error") or "")
-            ) if status["status"] == "FAILED" else (
+            ) if status.get("status") == "FAILED" else (
                 "This COSHH document is unverified. Rebuild COSHH only to use "
                 "ES.SOP.089.F01.V01."
             )
@@ -343,7 +357,7 @@ HTML = r'''<!doctype html>
 </style>
 </head>
 <body><div class="wrap">
-<div class="top"><div><h1>Material Assessment Agent</h1><div class="muted">One research run. Separate Cleaning Validation and COSHH draft outputs.</div><div class="muted" id="build-status">Verifying running COSHH version…</div></div><div class="muted">All generated records require human review.</div></div>
+<div class="top"><div><h1>Material Assessment Agent</h1><div class="muted">One research run. Separate Cleaning Validation and COSHH draft outputs.</div><div class="muted" id="build-status">Verifying running COSHH version…</div><div class="muted"><a href="/api/templates/coshh">View controlled COSHH master template (no AI cost)</a></div></div><div class="muted">All generated records require human review.</div></div>
 <div class="card"><div class="grid">
 <div><label>Material / API Name</label><input id="material" maxlength="55" placeholder="Haloperidol 10 mg Tablets"><div class="count"><span id="mc">0</span>/55</div></div>
 <div><label>Dosage Form</label><input id="dosage" maxlength="55" placeholder="Suspension"></div>
