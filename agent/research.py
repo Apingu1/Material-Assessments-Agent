@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import TypeVar
+from pathlib import Path
+import fitz
 
 from openai import OpenAI
 from pydantic import BaseModel
@@ -20,6 +22,7 @@ from .models import (
 )
 from .prompts import cleanability_prompt, coshh_prompt, coshh_rescue_prompt, hazard_prompt, identity_prompt, potency_prompt
 from .rescue_prompts import source_family_rescue_prompt
+from .sds import StoredSDS
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -142,6 +145,54 @@ class ResearchAgent:
             COSHHResearch,
             "coshh_research",
         )
+
+    def research_coshh_from_verified_pdf(
+        self,
+        item: MaterialInput,
+        identity: IdentityResearch,
+        stored_sds: StoredSDS,
+        *,
+        reference: bool,
+    ) -> COSHHResearch:
+        """Extract classification from the PDF ACTUALLY saved, not a previous SDS.
+
+        Supplier specificity is never inferred merely from a web document.
+        """
+        if stored_sds.status != "STORED_UNCHANGED":
+            raise ValueError("An original SDS PDF must be saved before re-extraction")
+        with fitz.open(stored_sds.local_path) as document:
+            full_text = "\n\n".join(page.get_text(sort=True) for page in document)
+        if len(full_text.strip()) < 300:
+            raise ValueError("Downloaded SDS PDF did not yield sufficient extractable text")
+        from .prompts import coshh_verified_pdf_prompt
+        result = self._structured_web_research(
+            coshh_verified_pdf_prompt(
+                material_name=item.material_name,
+                chemical_identity=self._chemical_identity(identity),
+                active_moiety=self._active_moiety(identity),
+                synonyms=identity.synonyms,
+                process_material_description=identity.process_material_description,
+                product_context=item.product_context,
+                source_url=stored_sds.resolved_pdf_url,
+                source_text=full_text[:65000],
+            ),
+            COSHHResearch,
+            "coshh_verified_pdf_extraction",
+        )
+        # Anchor the factual output to the actual PDF bytes; avoid a model
+        # returning a different or inaccessible URL.
+        result.sds.url = stored_sds.resolved_pdf_url
+        result.sds.source.url = stored_sds.resolved_pdf_url
+        if reference:
+            result.sds.match_status = "REFERENCE_SDS"
+            result.sds.is_supplier_specific = False
+            result.sds.match_rationale = (
+                "Reference SDS downloaded from a third-party publisher; confirm "
+                "the incoming material supplier and chemical/salt identity."
+            )
+        if not any(source.url == stored_sds.resolved_pdf_url for source in result.sources):
+            result.sources.insert(0, result.sds.source)
+        return result
 
     def research_coshh_alternative(
         self,

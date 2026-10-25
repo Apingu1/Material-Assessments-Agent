@@ -21,7 +21,7 @@ from .evidence import _is_bnf_url, EvidenceCapture, EvidenceCollector
 from .models import Conclusion, EvidenceSource, MaterialInput, ResearchBundle
 from .research import ResearchAgent
 from .rules import calculate_scoring
-from .sds import SDSStore
+from .sds import SDSStore, known_authoritative_sds_urls, sds_search_names
 from .source_waterfall import rescue_source_families
 
 
@@ -454,8 +454,32 @@ class AssessmentPipeline:
         coshh_status = {"status": "NOT_GENERATED", "error": ""}
         try:
             bundle.coshh = self.researcher.research_coshh(item, bundle.identity)
-            stored_sds = self.sds_store.acquire(bundle.coshh, material_dir)
+            sds_names = sds_search_names(
+                item.material_name, bundle.identity.chemical_identity,
+                bundle.identity.active_moiety,
+            )
+            stored_sds = self.sds_store.acquire(
+                bundle.coshh, material_dir, acceptable_names=sds_names
+            )
             selected_lane = "primary"
+            # Prefer a verified publisher-hosted source over an AI-invented or
+            # inaccessible URL. Exact chemical/CAS is still verified, and the
+            # SDS content is then re-extracted into a matching research package.
+            if stored_sds.status != "STORED_UNCHANGED":
+                reference_urls = known_authoritative_sds_urls(sds_names)
+                if reference_urls:
+                    stored_sds = self.sds_store.acquire(
+                        bundle.coshh, material_dir,
+                        previous_attempts=stored_sds.attempts,
+                        extra_urls=reference_urls,
+                        acceptable_names=sds_names,
+                    )
+                    if stored_sds.status == "STORED_UNCHANGED":
+                        bundle.coshh = self.researcher.research_coshh_from_verified_pdf(
+                            item, bundle.identity, stored_sds, reference=True
+                        )
+                        self.sds_store.write_metadata(stored_sds, bundle.coshh, material_dir)
+                        selected_lane = "authoritative_reference"
             rescue_errors: list[str] = []
             # A failed or blocked first SDS is not the end of the search.
             # Each fresh web-research pass returns a complete matching COSHH
@@ -474,17 +498,29 @@ class AssessmentPipeline:
                     )
                     initial_cas = bundle.coshh.sds.cas_number.strip()
                     proposed_cas = alternate.sds.cas_number.strip()
-                    if initial_cas and proposed_cas and initial_cas != proposed_cas:
+                    # Allow a verified parent/base-substance reference SDS even
+                    # when its CAS differs from the starting-material salt.
+                    # It must remain reference-only and must not silently
+                    # replace an SDS for a different salt/mixture.
+                    alternative_name = alternate.sds.substance_name.strip().lower()
+                    same_base_reference = alternative_name in {
+                        name.lower() for name in sds_names
+                    }
+                    if initial_cas and proposed_cas and initial_cas != proposed_cas and not same_base_reference:
                         rescue_errors.append(
                             f"{lane}: alternate SDS CAS {proposed_cas} conflicts with {initial_cas}; rejected"
                         )
                         continue
                     candidate = self.sds_store.acquire(
-                        alternate, material_dir, previous_attempts=stored_sds.attempts
+                        alternate, material_dir, previous_attempts=stored_sds.attempts,
+                        acceptable_names=sds_names,
                     )
                     stored_sds = candidate
                     if candidate.status == "STORED_UNCHANGED":
-                        bundle.coshh = alternate
+                        bundle.coshh = self.researcher.research_coshh_from_verified_pdf(
+                            item, bundle.identity, candidate, reference=True,
+                        )
+                        self.sds_store.write_metadata(candidate, bundle.coshh, material_dir)
                         selected_lane = lane
                 except Exception as exc:
                     rescue_errors.append(f"{lane}: {type(exc).__name__}: {str(exc)[:180]}")
@@ -500,6 +536,15 @@ class AssessmentPipeline:
                     "A replacement reference SDS was obtained from another source; "
                     "confirm substance/CAS, supplier applicability, revision and all hazards "
                     "against the actual material supplier SDS before approval."
+                )
+            if (
+                sds_names and stored_sds.status == "STORED_UNCHANGED"
+                and stored_sds.identity_match.startswith("NAME_MATCH:")
+                and stored_sds.identity_match.removeprefix("NAME_MATCH:").lower() != sds_names[0]
+            ):
+                coshh_assessment.review_flags.append(
+                    "The SDS was matched using an alternative/base substance name. "
+                    "Confirm salt form and hazard applicability for the actual incoming material."
                 )
             coshh_assessment.review_flags.extend(
                 f"SDS recovery search issue: {error}" for error in rescue_errors
@@ -533,6 +578,7 @@ class AssessmentPipeline:
                 "template": self.settings.coshh_template_path.name,
                 "sds_source_lane": selected_lane,
                 "sds_attempt_count": len(stored_sds.attempts),
+                "sds_identity_match": stored_sds.identity_match,
                 "run_id": run_id,
                 "template_verified": True,
                 "template_sha256": coshh_verification["template_sha256"],

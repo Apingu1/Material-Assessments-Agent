@@ -321,6 +321,54 @@ Return structured data only.
 """
 
 
+def coshh_verified_pdf_prompt(
+    *,
+    material_name: str,
+    chemical_identity: str,
+    active_moiety: str,
+    synonyms: list[str],
+    process_material_description: str,
+    product_context: str,
+    source_url: str,
+    source_text: str,
+) -> str:
+    return f"""TASK: Extract a factual UK COSHH research package directly from the complete
+text of the real Safety Data Sheet PDF that has already been downloaded.
+This is a DRAFT, never a human approval. The SDS is an independent reference
+unless there is separate evidence that it is the site's actual supplier SDS.
+
+INCOMING MATERIAL: {material_name}
+CHEMICAL SPECIES: {chemical_identity}
+ACTIVE BASE MOIETY: {active_moiety}
+SYNONYMS: {_joined(synonyms)}
+MATERIAL/WORKPLACE CONTEXT: {process_material_description or product_context or material_name}
+VERIFIED ORIGINAL SDS PDF URL: {source_url}
+
+MANDATORY SOURCE RULES
+- Use ONLY the supplied SDS PDF text for pictograms, signal word, H-statements,
+  P-statements, first aid, intrinsic health effects, physical form, fire,
+  spills, storage, PPE data and disposal. Do not import prior supplier SDS facts.
+- Sections 1, 2, 3, 4, 5, 6, 7, 8, 9, 11 and 13 must be checked.
+- All SDS details and citations must refer to the VERIFIED ORIGINAL SDS PDF URL;
+  never invent additional SDS URLs or swap to a related mixture/salt.
+- If the SDS is for the base moiety rather than the incoming maleate/other salt,
+  flag review_required and make it explicitly a reference-only basis.
+- Keep exact incoming material/use context separate from underlying chemical.
+- If text omits a property or health effect, leave it blank/unknown, don't invent.
+- The SDS PDF revision date must come from its actual Section 1/header;
+  don't use dated search snippets.
+- Check WEL via EH40/HSE when possible and distinguish no identified WEL from
+  not evaluated. Health surveillance remains a human workplace decision.
+- Return model-compatible structured fields including one SDS EvidenceSource and
+  `sources`; make interpretations plain professional factual language.
+- Do NOT produce PDE values. Do NOT invent Eaststone equipment practices.
+
+=== BEGIN PDF TEXT OF CHOSEN SDS ===
+{source_text}
+=== END PDF TEXT ===
+"""
+
+
 def coshh_rescue_prompt(
     *,
     material_name: str,
