@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import traceback
 from datetime import datetime
 from uuid import uuid4
 from pathlib import Path
@@ -458,15 +460,34 @@ class AssessmentPipeline:
         # human review but does not discard a completed cleaning-validation assessment.
         coshh_status = {"status": "NOT_GENERATED", "error": ""}
         try:
-            bundle.coshh = self.researcher.research_coshh(item, bundle.identity)
+            # Do not spend any COSHH API credits before trying confirmed,
+            # publisher-hosted reference SDS links for the chemical.
+            found_reference = self.sds_store.acquire_known_reference(
+                item.material_name, bundle.identity.chemical_identity,
+                bundle.identity.active_moiety, material_dir,
+            )
+            if found_reference and found_reference.status == "STORED_UNCHANGED":
+                stored_sds = found_reference
+                selected_lane = "authoritative_reference"
+                bundle.coshh = self.researcher.research_coshh_from_verified_pdf(
+                    item, bundle.identity, stored_sds, reference=True,
+                )
+                self.sds_store.write_metadata(stored_sds, bundle.coshh, material_dir)
+            else:
+                bundle.coshh = self.researcher.research_coshh(item, bundle.identity)
+                stored_sds = self.sds_store.acquire(
+                    bundle.coshh, material_dir,
+                    previous_attempts=found_reference.attempts if found_reference else None,
+                    acceptable_names=sds_search_names(
+                        item.material_name, bundle.identity.chemical_identity,
+                        bundle.identity.active_moiety,
+                    ),
+                )
+                selected_lane = "primary"
             sds_names = sds_search_names(
                 item.material_name, bundle.identity.chemical_identity,
                 bundle.identity.active_moiety,
             )
-            stored_sds = self.sds_store.acquire(
-                bundle.coshh, material_dir, acceptable_names=sds_names
-            )
-            selected_lane = "primary"
             # Prefer a verified publisher-hosted source over an AI-invented or
             # inaccessible URL. Exact chemical/CAS is still verified, and the
             # SDS content is then re-extracted into a matching research package.
@@ -490,7 +511,10 @@ class AssessmentPipeline:
             # Each fresh web-research pass returns a complete matching COSHH
             # hazard package, so a fallback SDS cannot inherit a different
             # supplier's H-statements and first-aid content.
-            for lane in ("manufacturer", "distributor", "alternative"):
+            # Repeated full web research is expensive and may be fruitless if
+            # the Codespace cannot access external supplier SDS endpoints.
+            max_searches = max(0, min(3, int(os.getenv("COSHH_MAX_RESCUE_SEARCHES", "1"))))
+            for lane in ("manufacturer", "distributor", "alternative")[:max_searches]:
                 if stored_sds.status == "STORED_UNCHANGED":
                     break
                 try:
@@ -591,7 +615,9 @@ class AssessmentPipeline:
             }
         except Exception as exc:
             message = str(exc)[:2000]
-            (material_dir / "COSHH_ERROR.txt").write_text(message, encoding="utf-8")
+            (material_dir / "COSHH_ERROR.txt").write_text(
+                traceback.format_exc(), encoding="utf-8"
+            )
             coshh_status = {
                 "status": "FAILED",
                 "error": message,
@@ -600,6 +626,8 @@ class AssessmentPipeline:
                 ),
                 "template_verified": False,
                 "run_id": run_id,
+                "stage": "COSHH_RESEARCH_OR_GENERATION",
+                "template": self.settings.coshh_template_path.name,
             }
 
         (material_dir / "COSHH_STATUS.json").write_text(

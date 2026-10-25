@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urljoin, urlparse
 
 import fitz
@@ -155,6 +156,66 @@ class SDSStore:
 
     def __init__(self, timeout_seconds: int = 25):
         self.timeout_seconds = timeout_seconds
+
+    def acquire_known_reference(
+        self, material_name: str, chemical_identity: str,
+        active_moiety: str, material_dir: Path,
+    ) -> StoredSDS | None:
+        """Zero-LLM attempt against explicitly verified publisher-hosted URLs."""
+        names = sds_search_names(material_name, chemical_identity, active_moiety)
+        urls = known_authoritative_sds_urls(names)
+        if not urls:
+            return None
+        # A minimal retrieval identity is sufficient; no fabricated COSHH
+        # classification is supplied or persisted to the actual assessment.
+        empty_source = SimpleNamespace(url="")
+        empty_sds = SimpleNamespace(
+            url="", source=empty_source, substance_name=names[0], cas_number="",
+            manufacturer="", product_name="", product_number="", revision_date="",
+            match_status="REFERENCE_SDS", match_rationale="Publisher SDS candidate",
+            is_supplier_specific=False,
+        )
+        retrieval = SimpleNamespace(
+            coshh_substance_name=chemical_identity or material_name,
+            sds=empty_sds, sources=[],
+        )
+        return self.acquire(
+            retrieval, material_dir, extra_urls=urls,
+            acceptable_names=names,
+        )
+
+    def import_uploaded_pdf(
+        self, content: bytes, research: COSHHResearch,
+        material_name: str, material_dir: Path,
+        *, extra_names: list[str] | None = None,
+        filename: str = "",
+    ) -> StoredSDS:
+        """Save an operator-supplied SDS byte-for-byte, with a match audit."""
+        if len(content) > 20 * 1024 * 1024:
+            raise ValueError("SDS PDF exceeds 20 MB size limit")
+        names = sds_search_names(material_name, research.sds.substance_name,
+                                 research.coshh_substance_name)
+        names.extend(extra_names or [])
+        accepted, identity = _valid_sds_pdf(
+            content, research.sds.substance_name, research.sds.cas_number,
+            acceptable_names=names,
+        )
+        if not accepted:
+            raise ValueError(f"Uploaded PDF rejected: {identity}")
+        sds_dir = material_dir / "sds"
+        sds_dir.mkdir(parents=True, exist_ok=True)
+        destination = sds_dir / f"{_slug(research.coshh_substance_name)} - Safety Data Sheet.pdf"
+        destination.write_bytes(content)
+        record = StoredSDS(
+            status="STORED_UNCHANGED", original_url="USER_UPLOAD",
+            resolved_pdf_url="USER_UPLOAD", local_path=str(destination),
+            sha256=hashlib.sha256(content).hexdigest(),
+            note=f"Operator-uploaded original SDS PDF ({Path(filename).name}); identity and supplier must be reviewed.",
+            attempts=[{"url": "USER_UPLOAD", "result": "STORED_UNCHANGED"}],
+            identity_match=identity,
+        )
+        self.write_metadata(record, research, material_dir)
+        return record
 
     def acquire(
         self,

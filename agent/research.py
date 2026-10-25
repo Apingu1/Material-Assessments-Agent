@@ -40,12 +40,14 @@ class ResearchAgent:
         self.settings = settings
         self.client = OpenAI(api_key=settings.openai_api_key)
 
-    def _structured_web_research(self, prompt: str, model_cls: type[T], schema_name: str) -> T:
+    def _structured_web_research(
+        self, prompt: str, model_cls: type[T], schema_name: str, *, search_web: bool = True
+    ) -> T:
         schema = model_cls.model_json_schema()
         api_schema_name = _safe_schema_name(schema_name)
         response = self.client.responses.create(
             model=self.settings.openai_model,
-            tools=[{"type": "web_search"}],
+            tools=[{"type": "web_search"}] if search_web else [],
             input=prompt,
             reasoning={"effort": "medium"},
             text={
@@ -178,6 +180,7 @@ class ResearchAgent:
             ),
             COSHHResearch,
             "coshh_verified_pdf_extraction",
+            search_web=False,  # PDF is already supplied; don't pay for a web search.
         )
         # Anchor the factual output to the actual PDF bytes; avoid a model
         # returning a different or inaccessible URL.

@@ -15,7 +15,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-25-controlled-v3-run-isolation-sds-substance"
+COSHH_ENGINE_BUILD = "2026-10-25-controlled-v4-direct-SDS-diagnostic-retry"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
