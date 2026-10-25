@@ -22,6 +22,7 @@ class StoredSDS:
     sha256: str
     note: str
     attempts: list[dict[str, str]] = field(default_factory=list)
+    identity_match: str = ""
 
 
 def _slug(value: str) -> str:
@@ -64,8 +65,38 @@ def _pdf_links(html: str, base_url: str) -> list[str]:
     )[:10]
 
 
-def _candidate_urls(research: COSHHResearch) -> list[str]:
-    urls = [research.sds.url, research.sds.source.url]
+def _clean_substance(value: str) -> str:
+    """Drop the incoming presentation, dose or route; preserve salts/hydrates."""
+    value = re.sub(r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|g|ml|%)\b", " ", value or "", flags=re.I)
+    value = re.sub(
+        r"\b(powder|tablets?|capsules?|granules?|oral|solution|suspension|for injection|"
+        r"active pharmaceutical ingredient|api)\b", " ", value, flags=re.I,
+    )
+    return re.sub(r"\s+", " ", value).strip(" ,;-").lower()
+
+
+def sds_search_names(material_name: str, chemical_identity: str = "", active_moiety: str = "") -> list[str]:
+    """SDS is identified by the chemical, not the dosage form or administration route."""
+    names = [_clean_substance(x) for x in (chemical_identity, material_name, active_moiety)]
+    result = list(dict.fromkeys(x for x in names if x))
+    return result
+
+
+def known_authoritative_sds_urls(names: list[str]) -> list[str]:
+    """Direct document URLs verified from official publisher catalogues.
+
+    Registry is deliberately small: never generate guessed regulator PDF URLs.
+    """
+    if any(re.search(r"\blevomepromazine(?:\s+maleate)?\b", name, re.I) for name in names):
+        return [
+            "https://www.pharmacopoeia.com/content/file/products/healthandsafety/CAT-723_GB.pdf",
+            "https://www.pharmacopoeia.tso.co.uk/content/file/products/healthandsafety/CAT-723_GB.pdf",
+        ]
+    return []
+
+
+def _candidate_urls(research: COSHHResearch, extra_urls: list[str] | None = None) -> list[str]:
+    urls = [research.sds.url, research.sds.source.url, *(extra_urls or [])]
     for source in research.sources:
         label = f"{source.title} {source.url}".lower()
         if any(term in label for term in ("sds", "msds", "safety data sheet", "safety-data")):
@@ -79,10 +110,13 @@ def _candidate_urls(research: COSHHResearch) -> list[str]:
             continue
         seen.add(url)
         result.append(url)
-    return result[:8]
+    return result[:12]
 
 
-def _valid_sds_pdf(content: bytes, substance: str, cas_number: str) -> tuple[bool, str]:
+def _valid_sds_pdf(
+    content: bytes, substance: str, cas_number: str,
+    acceptable_names: list[str] | None = None,
+) -> tuple[bool, str]:
     """Check retrieved bytes really contain a readable, identity-relevant SDS.
 
     This is a download integrity guard, NOT a regulatory verification or
@@ -98,10 +132,14 @@ def _valid_sds_pdf(content: bytes, substance: str, cas_number: str) -> tuple[boo
     normal = re.sub(r"\s+", " ", text).lower()
     if not re.search(r"(material )?safety data sheet|safety information sheet", normal):
         return False, "PDF did not contain identifiable Safety Data Sheet text"
-    name = re.sub(r"\s+", " ", substance.strip()).lower()
-    if name and name not in normal and (not cas_number or cas_number.lower() not in normal):
-        return False, "PDF text did not match the selected substance name or CAS"
-    return True, "SDS PDF text and identity indication found"
+    names = [_clean_substance(substance), *[_clean_substance(x) for x in (acceptable_names or [])]]
+    names = list(dict.fromkeys(x for x in names if x))
+    cas_found = bool(cas_number and re.search(r"(?<!\d)" + re.escape(cas_number) + r"(?!\d)", normal))
+    exact = next((name for name in names if re.search(r"(?<![a-z])" + re.escape(name) + r"(?![a-z])", normal)), "")
+    if not cas_found and not exact:
+        return False, "PDF text did not match the selected substance, acceptable name or CAS"
+    # A CAS match or exact salt-name match has strongest identity support.
+    return True, "CAS_MATCH" if cas_found else ("NAME_MATCH:" + exact)
 
 
 class SDSStore:
@@ -120,11 +158,13 @@ class SDSStore:
         material_dir: Path,
         *,
         previous_attempts: list[dict[str, str]] | None = None,
+        extra_urls: list[str] | None = None,
+        acceptable_names: list[str] | None = None,
     ) -> StoredSDS:
         sds_dir = material_dir / "sds"
         sds_dir.mkdir(parents=True, exist_ok=True)
         metadata_path = sds_dir / "SDS_METADATA.json"
-        urls = _candidate_urls(research)
+        urls = _candidate_urls(research, extra_urls=extra_urls)
         attempts = list(previous_attempts or [])
         result = StoredSDS(
             status="NOT_AVAILABLE",
@@ -167,7 +207,7 @@ class SDSStore:
                         pdf_url = str(candidate.url)
                         valid, reason = _valid_sds_pdf(
                             candidate.content, research.sds.substance_name or research.coshh_substance_name,
-                            research.sds.cas_number,
+                            research.sds.cas_number, acceptable_names=acceptable_names,
                         )
                         if not valid:
                             attempts.append({"url": pdf_url, "result": reason})
@@ -184,6 +224,7 @@ class SDSStore:
                             sha256=hashlib.sha256(candidate.content).hexdigest(),
                             note="Original readable SDS PDF stored byte-for-byte unchanged; supplier/revision requires human verification.",
                             attempts=attempts,
+                            identity_match=reason,
                         )
                         break
                     if result.status == "STORED_UNCHANGED":
@@ -193,6 +234,12 @@ class SDSStore:
                 except Exception as exc:
                     attempts.append({"url": source_url, "result": type(exc).__name__})
                 seen_urls.add(source_url)
+        self.write_metadata(result, research, material_dir)
+        return result
+
+    @staticmethod
+    def write_metadata(result: StoredSDS, research: COSHHResearch, material_dir: Path) -> None:
+        metadata_path = material_dir / "sds" / "SDS_METADATA.json"
         payload = {
             **asdict(result),
             "substance_name": research.sds.substance_name,
@@ -206,4 +253,3 @@ class SDSStore:
             "is_supplier_specific": research.sds.is_supplier_specific,
         }
         metadata_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        return result
