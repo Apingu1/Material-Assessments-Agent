@@ -101,7 +101,10 @@ def check() -> None:
     console.print(f"Model: {settings.openai_model}")
     console.print("OpenAI key: " + ("configured" if settings.openai_api_key else "NOT configured"))
     console.print(f"Evidence capture: {settings.capture_evidence}")
-    console.print("COSHH: enabled; generated programmatically from SDS/workplace context")
+    console.print(f"COSHH controlled template: {settings.coshh_template_path.name}")
+    from .coshh_template import validate_coshh_template
+    validate_coshh_template(settings.coshh_template_path)
+    console.print("[green]COSHH template: valid (134 mapped fields)[/green]")
 
 
 @app.command("add")

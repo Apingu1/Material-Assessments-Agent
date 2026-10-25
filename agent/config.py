@@ -72,9 +72,6 @@ class Settings:
             )
         if not self.template_path.exists():
             raise FileNotFoundError(f"Assessment template not found: {self.template_path}")
-        coshh_parts = self.coshh_template_path.parent / (self.coshh_template_path.name + ".b64")
-        if not self.coshh_template_path.exists() and not coshh_parts.exists():
-            raise FileNotFoundError(
-                f"COSHH template not found: {self.coshh_template_path} "
-                f"(or embedded parts directory {coshh_parts})"
-            )
+        from .coshh_template import validate_coshh_template
+
+        validate_coshh_template(self.coshh_template_path)

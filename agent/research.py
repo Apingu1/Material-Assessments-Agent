@@ -18,7 +18,7 @@ from .models import (
     PotencyResearch,
     ResearchBundle,
 )
-from .prompts import cleanability_prompt, coshh_prompt, hazard_prompt, identity_prompt, potency_prompt
+from .prompts import cleanability_prompt, coshh_prompt, coshh_rescue_prompt, hazard_prompt, identity_prompt, potency_prompt
 from .rescue_prompts import source_family_rescue_prompt
 
 T = TypeVar("T", bound=BaseModel)
@@ -141,6 +141,31 @@ class ResearchAgent:
             ),
             COSHHResearch,
             "coshh_research",
+        )
+
+    def research_coshh_alternative(
+        self,
+        item: MaterialInput,
+        identity: IdentityResearch,
+        existing: COSHHResearch,
+        attempted_urls: list[str],
+        lane: str,
+    ) -> COSHHResearch:
+        """Second/third SDS-specific web search, including a fresh hazard extraction."""
+        return self._structured_web_research(
+            coshh_rescue_prompt(
+                material_name=item.material_name,
+                chemical_identity=self._chemical_identity(identity),
+                active_moiety=self._active_moiety(identity),
+                synonyms=identity.synonyms,
+                process_material_description=identity.process_material_description,
+                product_context=item.product_context,
+                expected_cas=existing.sds.cas_number,
+                excluded_urls=attempted_urls,
+                lane=lane,
+            ),
+            COSHHResearch,
+            f"coshh_sds_rescue_{lane}",
         )
 
     def rescue_evidence_from_family(

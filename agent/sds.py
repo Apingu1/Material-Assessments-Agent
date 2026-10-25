@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+import fitz
 import httpx
 
 from .models import COSHHResearch
@@ -20,6 +21,7 @@ class StoredSDS:
     local_path: str
     sha256: str
     note: str
+    attempts: list[dict[str, str]] = field(default_factory=list)
 
 
 def _slug(value: str) -> str:
@@ -32,109 +34,165 @@ def _looks_pdf(content: bytes, content_type: str) -> bool:
 
 
 def _pdf_links(html: str, base_url: str) -> list[str]:
-    links = re.findall(r"href\s*=\s*[\"']([^\"']+)[\"']", html, flags=re.IGNORECASE)
+    # SDS pages frequently place the download in an iframe, embedded PDF viewer
+    # or data-href rather than an ordinary anchor link.
+    links = re.findall(
+        r'(?:href|src|data-href|data-url)\s*=\s*["\']([^"\']+)["\']',
+        html, flags=re.IGNORECASE,
+    )
     absolute: list[str] = []
     seen: set[str] = set()
     for href in links:
         url = urljoin(base_url, href.strip())
         parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"}:
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             continue
         text = url.lower()
-        if not (".pdf" in text or "sds" in text or "msds" in text or "safety-data" in text):
+        if not any(word in text for word in (".pdf", "sds", "msds", "safety-data", "safety_data")):
             continue
         if url in seen:
             continue
         seen.add(url)
         absolute.append(url)
 
-    def rank(url: str) -> tuple[int, int]:
-        text = url.lower()
-        return (
-            0 if ("sds" in text or "msds" in text or "safety-data" in text) else 1,
-            0 if ".pdf" in text else 1,
-        )
+    return sorted(
+        absolute,
+        key=lambda url: (
+            0 if any(term in url.lower() for term in ("sds", "msds", "safety-data")) else 1,
+            0 if ".pdf" in url.lower() else 1,
+        ),
+    )[:10]
 
-    return sorted(absolute, key=rank)[:8]
+
+def _candidate_urls(research: COSHHResearch) -> list[str]:
+    urls = [research.sds.url, research.sds.source.url]
+    for source in research.sources:
+        label = f"{source.title} {source.url}".lower()
+        if any(term in label for term in ("sds", "msds", "safety data sheet", "safety-data")):
+            urls.append(source.url)
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in urls:
+        url = (url or "").strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or url in seen:
+            continue
+        seen.add(url)
+        result.append(url)
+    return result[:8]
+
+
+def _valid_sds_pdf(content: bytes, substance: str, cas_number: str) -> tuple[bool, str]:
+    """Check retrieved bytes really contain a readable, identity-relevant SDS.
+
+    This is a download integrity guard, NOT a regulatory verification or
+    substitute for checking the supplier, revision and hazard classification.
+    """
+    if not content.startswith(b"%PDF-"):
+        return False, "Downloaded content was not a PDF"
+    try:
+        with fitz.open(stream=content, filetype="pdf") as pdf:
+            text = " ".join(page.get_text() for page in list(pdf)[:6])
+    except Exception:
+        return False, "Downloaded PDF could not be read"
+    normal = re.sub(r"\s+", " ", text).lower()
+    if not re.search(r"(material )?safety data sheet|safety information sheet", normal):
+        return False, "PDF did not contain identifiable Safety Data Sheet text"
+    name = re.sub(r"\s+", " ", substance.strip()).lower()
+    if name and name not in normal and (not cas_number or cas_number.lower() not in normal):
+        return False, "PDF text did not match the selected substance name or CAS"
+    return True, "SDS PDF text and identity indication found"
 
 
 class SDSStore:
-    """Best-effort downloader that preserves the selected SDS PDF bytes unchanged."""
+    """Search candidate URLs and download an original, unmodified SDS PDF.
 
-    def __init__(self, timeout_seconds: int = 30):
+    Records every failed attempt. Alternate-source research is orchestrated by
+    AssessmentPipeline; this class performs deterministic URL/link recovery.
+    """
+
+    def __init__(self, timeout_seconds: int = 25):
         self.timeout_seconds = timeout_seconds
 
-    def acquire(self, research: COSHHResearch, material_dir: Path) -> StoredSDS:
+    def acquire(
+        self,
+        research: COSHHResearch,
+        material_dir: Path,
+        *,
+        previous_attempts: list[dict[str, str]] | None = None,
+    ) -> StoredSDS:
         sds_dir = material_dir / "sds"
         sds_dir.mkdir(parents=True, exist_ok=True)
         metadata_path = sds_dir / "SDS_METADATA.json"
-        source_url = research.sds.url.strip() or research.sds.source.url.strip()
+        urls = _candidate_urls(research)
+        attempts = list(previous_attempts or [])
         result = StoredSDS(
             status="NOT_AVAILABLE",
-            original_url=source_url,
+            original_url=urls[0] if urls else "",
             resolved_pdf_url="",
             local_path="",
             sha256="",
-            note="Original SDS PDF could not be downloaded automatically; use the recorded source URL during review.",
+            note="No downloadable, identity-matched SDS PDF found; supplier SDS requires manual verification.",
+            attempts=attempts,
         )
-
-        if not source_url:
-            metadata_path.write_text(json.dumps(asdict(result), indent=2), encoding="utf-8")
-            return result
-
         headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
-            ),
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36",
             "Accept-Language": "en-GB,en;q=0.9",
+            "Accept": "application/pdf,text/html,*/*",
         }
-
-        try:
-            with httpx.Client(
-                follow_redirects=True,
-                timeout=self.timeout_seconds,
-                headers=headers,
-            ) as client:
-                response = client.get(source_url)
-                response.raise_for_status()
-                pdf_bytes: bytes | None = None
-                pdf_url = str(response.url)
-                if _looks_pdf(response.content, response.headers.get("content-type", "")):
-                    pdf_bytes = response.content
-                else:
-                    html = response.text
-                    for candidate in _pdf_links(html, str(response.url)):
-                        try:
-                            candidate_response = client.get(candidate, referer=str(response.url))
-                            candidate_response.raise_for_status()
-                        except Exception:
+        with httpx.Client(follow_redirects=True, timeout=self.timeout_seconds, headers=headers) as client:
+            seen_urls: set[str] = {entry.get("url", "") for entry in attempts}
+            for source_url in urls:
+                if source_url in seen_urls:
+                    continue
+                try:
+                    response = client.get(source_url)
+                    response.raise_for_status()
+                    candidates = [response]
+                    if not _looks_pdf(response.content, response.headers.get("content-type", "")):
+                        candidates = []
+                        for link in _pdf_links(response.text, str(response.url)):
+                            if link in seen_urls:
+                                continue
+                            try:
+                                linked = client.get(link, headers={"Referer": str(response.url)})
+                                linked.raise_for_status()
+                                candidates.append(linked)
+                            except httpx.HTTPError as exc:
+                                attempts.append({"url": link, "result": type(exc).__name__})
+                                seen_urls.add(link)
+                    if not candidates:
+                        attempts.append({"url": source_url, "result": "No linked PDF found"})
+                    for candidate in candidates:
+                        pdf_url = str(candidate.url)
+                        valid, reason = _valid_sds_pdf(
+                            candidate.content, research.sds.substance_name or research.coshh_substance_name,
+                            research.sds.cas_number,
+                        )
+                        if not valid:
+                            attempts.append({"url": pdf_url, "result": reason})
                             continue
-                        if _looks_pdf(
-                            candidate_response.content,
-                            candidate_response.headers.get("content-type", ""),
-                        ):
-                            pdf_bytes = candidate_response.content
-                            pdf_url = str(candidate_response.url)
-                            break
-
-                if pdf_bytes is not None:
-                    filename = f"{_slug(research.coshh_substance_name)} - Safety Data Sheet.pdf"
-                    path = sds_dir / filename
-                    # The SDS is deliberately not rendered, merged, annotated or rewritten.
-                    path.write_bytes(pdf_bytes)
-                    digest = hashlib.sha256(pdf_bytes).hexdigest()
-                    result = StoredSDS(
-                        status="STORED_UNCHANGED",
-                        original_url=source_url,
-                        resolved_pdf_url=pdf_url,
-                        local_path=str(path),
-                        sha256=digest,
-                        note="Original SDS PDF stored byte-for-byte unchanged.",
-                    )
-        except Exception as exc:
-            result.note = f"Automatic SDS download failed: {type(exc).__name__}. Source URL retained for review."
-
+                        filename = f"{_slug(research.coshh_substance_name)} - Safety Data Sheet.pdf"
+                        path = sds_dir / filename
+                        path.write_bytes(candidate.content)  # Preserve original bytes, never modify the SDS.
+                        attempts.append({"url": pdf_url, "result": "STORED_UNCHANGED"})
+                        result = StoredSDS(
+                            status="STORED_UNCHANGED",
+                            original_url=source_url,
+                            resolved_pdf_url=pdf_url,
+                            local_path=str(path),
+                            sha256=hashlib.sha256(candidate.content).hexdigest(),
+                            note="Original readable SDS PDF stored byte-for-byte unchanged; supplier/revision requires human verification.",
+                            attempts=attempts,
+                        )
+                        break
+                    if result.status == "STORED_UNCHANGED":
+                        break
+                except httpx.HTTPError as exc:
+                    attempts.append({"url": source_url, "result": type(exc).__name__})
+                except Exception as exc:
+                    attempts.append({"url": source_url, "result": type(exc).__name__})
+                seen_urls.add(source_url)
         payload = {
             **asdict(result),
             "substance_name": research.sds.substance_name,

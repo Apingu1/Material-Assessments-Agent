@@ -3,7 +3,7 @@
 Autonomous research and draft-generation agent for two linked Eaststone workflows:
 
 1. **ES.SOP.272.F01.V02 - Material Hazard & Cleanability Screening Assessment** for Cleaning Validation; and
-2. a new **agent-generated COSHH Assessment** supported by a separately stored Safety Data Sheet (SDS).
+2. **ES.SOP.089.F01.V01 COSHH Assessment** in the controlled Word layout, supported by a separately stored Safety Data Sheet (SDS).
 
 The agent performs research and prepares draft records. It is **not an approver**. All generated records remain subject to human review, with COSHH reviewer/approver/signature/date fields intentionally left blank for physical approval.
 
@@ -103,6 +103,10 @@ The COSHH researcher seeks one strong SDS first, preferring:
 3. a recognised major chemical supplier SDS for the exact chemical species/CAS.
 
 A different salt/base form or mixture cannot silently substitute for the assessed substance. A non-supplier SDS is explicitly recorded as a **reference SDS** and flagged for verification before approval.
+
+If the initial SDS URL cannot be downloaded as an identity-relevant SDS PDF, the downloader checks other SDS links and embedded viewer URLs, then performs up to three additional web-search passes (manufacturer, established distributor, other reputable exact-substance SDS sources). Each alternative search regenerates the COSHH research from its newly selected SDS rather than mixing suppliers' hazard statements. The record includes every attempted URL and its failure reason in `sds/SDS_METADATA.json`; it does **not** silently substitute a different CAS or salt. No source being found remains a human-review gap, not an approved assessment.
+
+The controlled 134-field template is now mandatory: startup rejects absent/mismatched templates, and the old programmatically drawn COSHH form is disabled. After switching branches, **restart the existing Codespaces Python web server** to load the updated code. Use `python -m agent.cli check` to verify both templates.
 
 The agent also checks whether a GB Workplace Exposure Limit is identified and considers whether health surveillance may require human review.
 

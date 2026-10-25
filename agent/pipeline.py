@@ -451,11 +451,55 @@ class AssessmentPipeline:
         try:
             bundle.coshh = self.researcher.research_coshh(item, bundle.identity)
             stored_sds = self.sds_store.acquire(bundle.coshh, material_dir)
+            selected_lane = "primary"
+            rescue_errors: list[str] = []
+            # A failed or blocked first SDS is not the end of the search.
+            # Each fresh web-research pass returns a complete matching COSHH
+            # hazard package, so a fallback SDS cannot inherit a different
+            # supplier's H-statements and first-aid content.
+            for lane in ("manufacturer", "distributor", "alternative"):
+                if stored_sds.status == "STORED_UNCHANGED":
+                    break
+                try:
+                    alternate = self.researcher.research_coshh_alternative(
+                        item,
+                        bundle.identity,
+                        bundle.coshh,
+                        [x["url"] for x in stored_sds.attempts],
+                        lane,
+                    )
+                    initial_cas = bundle.coshh.sds.cas_number.strip()
+                    proposed_cas = alternate.sds.cas_number.strip()
+                    if initial_cas and proposed_cas and initial_cas != proposed_cas:
+                        rescue_errors.append(
+                            f"{lane}: alternate SDS CAS {proposed_cas} conflicts with {initial_cas}; rejected"
+                        )
+                        continue
+                    candidate = self.sds_store.acquire(
+                        alternate, material_dir, previous_attempts=stored_sds.attempts
+                    )
+                    stored_sds = candidate
+                    if candidate.status == "STORED_UNCHANGED":
+                        bundle.coshh = alternate
+                        selected_lane = lane
+                except Exception as exc:
+                    rescue_errors.append(f"{lane}: {type(exc).__name__}: {str(exc)[:180]}")
             coshh_assessment = build_coshh_assessment(item, bundle.coshh)
             if stored_sds.status != "STORED_UNCHANGED":
                 coshh_assessment.review_flags.append(
-                    "The original SDS PDF was not captured automatically; verify/download the SDS from the recorded source before approval."
+                    "No downloadable, identity-matched SDS PDF was located after primary, "
+                    "manufacturer, distributor and alternative-source searches. Obtain "
+                    "and check the correct supplier SDS before approving this draft."
                 )
+            if selected_lane != "primary":
+                coshh_assessment.review_flags.append(
+                    "A replacement reference SDS was obtained from another source; "
+                    "confirm substance/CAS, supplier applicability, revision and all hazards "
+                    "against the actual material supplier SDS before approval."
+                )
+            coshh_assessment.review_flags.extend(
+                f"SDS recovery search issue: {error}" for error in rescue_errors
+            )
 
             (material_dir / "coshh_assessment.json").write_text(
                 coshh_assessment.model_dump_json(indent=2), encoding="utf-8"
@@ -478,6 +522,9 @@ class AssessmentPipeline:
                 "error": "",
                 "sds_status": stored_sds.status,
                 "substance": bundle.coshh.coshh_substance_name,
+                "template": self.settings.coshh_template_path.name,
+                "sds_source_lane": selected_lane,
+                "sds_attempt_count": len(stored_sds.attempts),
             }
         except Exception as exc:
             message = str(exc)[:2000]

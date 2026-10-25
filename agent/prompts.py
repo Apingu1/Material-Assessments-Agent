@@ -321,6 +321,51 @@ Return structured data only.
 """
 
 
+def coshh_rescue_prompt(
+    *,
+    material_name: str,
+    chemical_identity: str,
+    active_moiety: str,
+    synonyms: list[str],
+    process_material_description: str,
+    product_context: str,
+    expected_cas: str,
+    excluded_urls: list[str],
+    lane: str,
+) -> str:
+    """Target another credible SDS when the first selected source could not be downloaded."""
+    baseline = coshh_prompt(
+        material_name, chemical_identity, active_moiety, synonyms,
+        process_material_description, product_context,
+    )
+    family = {
+        "manufacturer": "Search manufacturer, original API maker and official supplier document portals; include synonyms, CAS and SDS download PDF.",
+        "distributor": "Search major established chemical and pharmaceutical laboratory distributors (e.g. Merck/Sigma-Aldrich, Fisher, TCI, Cayman, LGC), including regional UK/EU SDS portals, with exact CAS.",
+        "alternative": "Search other reputable chemical supplier/regulatory source documents, aliases, translated SDS labels, and direct PDF search results. Do not substitute related compounds.",
+    }.get(lane, "Find a different authentic exact-substance SDS.")
+    return baseline + f"""
+
+SDS DOWNLOAD RESCUE - REQUIRED NEW WEB SEARCH
+The SDS previously selected could not be downloaded and verified as an SDS PDF.
+Carry out a NEW, independent web search in this source family:
+{family}
+
+Controlled identity: {chemical_identity}; base moiety: {active_moiety}.
+Expected CAS (if verified): {expected_cas or 'unknown'}.
+These URLs were already attempted and failed:
+{chr(10).join('- ' + url for url in excluded_urls[-25:]) or '- none recorded'}
+
+Find a genuinely DIFFERENT, publicly accessible SDS PDF or supplier-hosted SDS download page.
+Try manufacturer product codes, synonyms, exact CAS, "safety data sheet", "SDS pdf",
+and "MSDS". Explicitly verify the URL in web results, do not invent a document URL.
+Keep EXACT salt/base, CAS and formulation identities distinct; if none is established,
+leave the URL empty instead of guessing. Regenerate ALL SDS-derived COSHH fields from
+the newly selected document, not from the failed SDS. Prefer current GB/UK/European SDS.
+Mark a third-party SDS as REFERENCE_SDS, not supplier-matched.
+Record an explicit review note if no acceptable alternate SDS can be found.
+"""
+
+
 def evidence_rescue_prompt(
     *,
     group: str,

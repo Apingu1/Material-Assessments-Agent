@@ -152,6 +152,21 @@ def _fill_tagged_template(template_path: Path, output_path: Path, values: dict[s
             destination.writestr(name, content)
 
 
+def validate_coshh_template(template_path: Path) -> None:
+    """Fail fast when the running instance points at the wrong COSHH form."""
+    with ZipFile(BytesIO(_template_bytes(template_path)), "r") as archive:
+        root = etree.fromstring(archive.read("word/document.xml"))
+    tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
+    required = {"RES_SUBSTANCE_PRODUCT", "SDS_HAZARD_STATEMENTS",
+                "DER_PPE_QC_FUME_HOOD", "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR",
+                "HUM_APPROVED_SIGNATURE"}
+    if len(tags) != 134 or not required.issubset(tags):
+        raise ValueError(
+            f"Wrong COSHH template: expected 134 ES.SOP.089.F01.V01 tagged controls, "
+            f"found {len(tags)} in {template_path}"
+        )
+
+
 def _physical_form_flags(value: str) -> dict[str, bool]:
     text = _normalise(value).lower()
     powder = any(token in text for token in ("powder", "dust", "micronised", "micronized"))
