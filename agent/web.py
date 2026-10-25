@@ -11,11 +11,12 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .config import Settings, REPO_ROOT
+from .coshh_recovery import regenerate_coshh_only, upload_sds_for_existing_run
 from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-25-controlled-v4-direct-SDS-diagnostic-retry"
+COSHH_ENGINE_BUILD = "2026-10-25-controlled-v5-coshh-only-retry"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -40,7 +41,7 @@ def _final_status(bundle) -> str:
 def _coshh_payload(output_dir: Path) -> dict:
     path = output_dir / "COSHH_STATUS.json"
     if not path.exists():
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": ""}
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": "", "error": "COSHH generation did not complete."}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return {
@@ -48,9 +49,12 @@ def _coshh_payload(output_dir: Path) -> dict:
             "sds_status": str(payload.get("sds_status") or "NOT_AVAILABLE"),
             "template_verified": bool(payload.get("template_verified", False)),
             "template": str(payload.get("template") or ""),
+            "error": str(payload.get("error") or ""),
+            "stage": str(payload.get("stage") or ""),
+            "sds_attempt_count": int(payload.get("sds_attempt_count") or 0),
         }
     except Exception:
-        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": ""}
+        return {"status": "FAILED", "sds_status": "NOT_AVAILABLE", "template_verified": False, "template": "", "error": "COSHH generation did not complete."}
 
 
 def _coshh_status(output_dir: Path) -> str:
@@ -136,6 +140,9 @@ def queue_rows() -> list[dict]:
             payload["sds_status"] = coshh["sds_status"]
             payload["coshh_template_verified"] = coshh["template_verified"]
             payload["coshh_template"] = coshh["template"]
+            payload["coshh_error"] = coshh["error"]
+            payload["coshh_stage"] = coshh["stage"]
+            payload["sds_attempt_count"] = coshh["sds_attempt_count"]
             if not payload.get("coshh_status") or payload["coshh_status"] == "RESEARCHING":
                 payload["coshh_status"] = coshh["status"]
         result.append(payload)
@@ -178,7 +185,10 @@ def _output_dir(material_id: int) -> Path:
     row = queue.get_row(material_id)
     if not row or not row["output_dir"]:
         raise HTTPException(status_code=404, detail="Output is not available yet.")
-    return Path(row["output_dir"]).resolve()
+    resolved = Path(row["output_dir"]).resolve()
+    if not resolved.is_relative_to(settings.output_dir.resolve()):
+        raise HTTPException(status_code=403, detail="Assessment output path is outside the configured output directory.")
+    return resolved
 
 
 def _match_output(material_id: int, pattern: str) -> Path:
@@ -187,6 +197,86 @@ def _match_output(material_id: int, pattern: str) -> Path:
     if not matches:
         raise HTTPException(status_code=404, detail="Requested output file is not available.")
     return matches[0]
+
+
+def _recover_coshh_only(material_id: int) -> None:
+    """Independent COSHH recovery; NEVER rerun the Cleaning Validation research."""
+    if not _worker_lock.acquire(blocking=False):
+        return
+    try:
+        settings = _settings()
+        queue = MaterialQueue(settings.database_path)
+        row = queue.get_row(material_id)
+        if not row or not row["output_dir"]:
+            return
+        output_dir = _output_dir(material_id)
+        queue.update(
+            material_id, row["status"], str(output_dir), None,
+            cleaning_status=row["cleaning_status"], coshh_status="RESEARCHING",
+        )
+        result = regenerate_coshh_only(settings, output_dir)
+        queue.update(
+            material_id, row["status"], str(output_dir),
+            result.get("error") or None,
+            cleaning_status=row["cleaning_status"],
+            coshh_status=result["status"],
+        )
+    finally:
+        _worker_lock.release()
+
+
+@app.post("/api/coshh/{material_id}/retry")
+def retry_coshh_only(material_id: int, background_tasks: BackgroundTasks) -> dict:
+    output_dir = _output_dir(material_id)
+    if not (output_dir / "assessment.json").is_file():
+        raise HTTPException(
+            status_code=409, detail="Saved assessment.json unavailable: cannot retry COSHH independently."
+        )
+    if _worker_lock.locked():
+        raise HTTPException(status_code=409, detail="An assessment is already running.")
+    background_tasks.add_task(_recover_coshh_only, material_id)
+    return {"started": True, "scope": "COSHH_ONLY", "cleaning_validation_rerun": False}
+
+
+@app.post("/api/coshh/{material_id}/sds")
+async def attach_sds(material_id: int, file: UploadFile = File(...)) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Attach an original PDF Safety Data Sheet.")
+    output_dir = _output_dir(material_id)
+    if _worker_lock.locked():
+        raise HTTPException(status_code=409, detail="Wait until the current assessment finishes.")
+    content = await file.read(20 * 1024 * 1024 + 1)
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="SDS PDF cannot exceed 20 MB.")
+    try:
+        stored = upload_sds_for_existing_run(output_dir, content, file.filename)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    settings = _settings()
+    queue = MaterialQueue(settings.database_path)
+    row = queue.get_row(material_id)
+    queue.update(
+        material_id, row["status"], str(output_dir), None,
+        cleaning_status=row["cleaning_status"], coshh_status="FAILED",
+    )
+    return {"sds_status": stored.status, "identity_match": stored.identity_match,
+            "message": "SDS stored unchanged. Select 'Rebuild COSHH only' to generate the controlled form."}
+
+
+@app.get("/api/coshh/{material_id}/diagnostics")
+def coshh_diagnostics(material_id: int) -> dict:
+    output_dir = _output_dir(material_id)
+    result = _coshh_payload(output_dir)
+    metadata = output_dir / "sds" / "SDS_METADATA.json"
+    if metadata.is_file():
+        try:
+            info = json.loads(metadata.read_text(encoding="utf-8"))
+            result["attempts"] = info.get("attempts") or []
+            result["identity_match"] = info.get("identity_match") or ""
+            result["sds_note"] = info.get("note") or ""
+        except (OSError, ValueError):
+            result["sds_note"] = "SDS metadata could not be read."
+    return result
 
 
 @app.get("/api/download/{material_id}/{kind}")
@@ -203,6 +293,7 @@ def download(material_id: int, kind: str):
         "coshh_json": "coshh_assessment.json",
         "sds": "sds/*Safety Data Sheet.pdf",
         "sds_meta": "sds/SDS_METADATA.json",
+        "coshh_error": "COSHH_ERROR.txt",
     }
     pattern = patterns.get(kind)
     if not pattern:
@@ -211,11 +302,14 @@ def download(material_id: int, kind: str):
         output_dir = _output_dir(material_id)
         status = _coshh_payload(output_dir)
         if not status["template_verified"]:
-            raise HTTPException(
-                status_code=409,
-                detail="This is an older or unverified COSHH form. Generate a new "
-                "assessment to use the controlled ES.SOP.089.F01.V01 template.",
+            detail = (
+                "COSHH generation failed or has not completed; no verified document "
+                "is available. " + (status.get("error") or "")
+            ) if status["status"] == "FAILED" else (
+                "This COSHH document is unverified. Rebuild COSHH only to use "
+                "ES.SOP.089.F01.V01."
             )
+            raise HTTPException(status_code=409, detail=detail)
         from .coshh_template import verify_generated_coshh_document
         docx_files = list(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
         if len(docx_files) != 1:
@@ -283,7 +377,36 @@ async function add(run){const body={material_name:m.value.trim(),dosage_forms:do
 async function runAll(){await fetch('/api/run',{method:'POST'});note('Pending assessments are being processed.');setTimeout(refresh,1000)}
 async function uploadCsv(){const f=document.getElementById('csv').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);const r=await fetch('/api/import-csv',{method:'POST',body:fd});const x=await r.json();note(r.ok?`${x.imported} material(s) imported.`:(x.detail||'Import failed.'));await refresh()}
 function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.cleaning_status||row.status)}</span>`;const b=`/api/download/${row.id}/`;return `<div class="status">${esc(row.cleaning_status||row.status)}</div><span class="links"><a href="${b}form">Form</a><a href="${b}dossier">Dossier</a><a href="${b}pdf">PDF</a><a href="${b}summary">Summary</a></span>`}
-function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;let links=(verified?`<a href="${b}coshh">COSHH V01 (verified)</a><a href="${b}coshh_pdf">PDF</a>`:`<span class="error">Old/unchecked COSHH output — rerun for controlled form.</span> `)+`<a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
+function coshh(row){
+if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;
+const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;
+let links=verified?`<a href="${b}coshh">Controlled COSHH V01</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`:'';
+if(!verified && row.coshh_status==='FAILED'){
+ links+=`<div class="error">COSHH not generated: ${esc(row.coshh_error||'Review diagnostics')}</div>`;
+}
+links+=`<a href="/api/coshh/${row.id}/diagnostics" target="_blank">Error / SDS diagnostics</a>`;
+if(row.sds_status==='STORED_UNCHANGED'){
+links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`;
+}
+if(!verified && row.coshh_status!=='RESEARCHING'){
+links+=`<button class="secondary" style="padding:5px 8px;font-size:11px" onclick="retryCoshh(${row.id})">Rebuild COSHH only</button>`;
+}
+links+=`<label class="filebtn secondary" style="padding:5px 8px;font-size:11px">Attach SDS PDF<input type="file" accept=".pdf,application/pdf" onchange="uploadSds(${row.id},this)"></label>`;
+return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`;
+}
+async function retryCoshh(id){
+ if(!confirm('Rebuild COSHH from saved Cleaning Validation research and an SDS PDF? No Cleaning Validation re-run. If an SDS exists, one COSHH PDF-extraction AI call may be billed.'))return;
+ const r=await fetch('/api/coshh/'+id+'/retry',{method:'POST'});
+ const x=await r.json();note(r.ok?'COSHH-only rebuild started. Cleaning Validation will NOT rerun.':(x.detail||'COSHH retry failed.'));
+ await refresh();
+}
+async function uploadSds(id, input){
+ const f=input.files[0];if(!f)return;
+ const form=new FormData();form.append('file',f);
+ const r=await fetch('/api/coshh/'+id+'/sds',{method:'POST',body:form});
+ const x=await r.json();note(r.ok?'SDS PDF saved unchanged. Click Rebuild COSHH only to extract and populate the form.':(x.detail||'SDS upload rejected.'));
+ await refresh();
+}
 async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
 async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version',{cache:'no-store'});if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH: '+v.coshh_template+' ('+v.coshh_template_fields+' fields) | Loaded engine: '+(v.loaded_engine_build||'legacy')+' | Repository: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
