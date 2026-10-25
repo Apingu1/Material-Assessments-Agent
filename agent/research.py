@@ -35,6 +35,32 @@ def _safe_schema_name(value: str) -> str:
     return f"{value[:55]}_{digest}"
 
 
+def _strict_response_schema(model_cls: type[BaseModel]) -> dict:
+    """Normalise Pydantic JSON Schema for OpenAI strict structured output.
+
+    OpenAI requires every object property to be listed in required (including
+    nested objects). Keep Pydantic defaults for old assessment.json records,
+    but remove them from outbound strict response schemas.
+    """
+    schema = model_cls.model_json_schema()
+
+    def normalise(node: object) -> None:
+        if isinstance(node, dict):
+            node.pop("default", None)
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                node["required"] = list(properties)
+                node["additionalProperties"] = False
+            for value in node.values():
+                normalise(value)
+        elif isinstance(node, list):
+            for value in node:
+                normalise(value)
+
+    normalise(schema)
+    return schema
+
+
 class ResearchAgent:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -43,7 +69,7 @@ class ResearchAgent:
     def _structured_web_research(
         self, prompt: str, model_cls: type[T], schema_name: str, *, search_web: bool = True
     ) -> T:
-        schema = model_cls.model_json_schema()
+        schema = _strict_response_schema(model_cls)
         api_schema_name = _safe_schema_name(schema_name)
         response = self.client.responses.create(
             model=self.settings.openai_model,
