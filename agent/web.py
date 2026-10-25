@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import shutil
 import tempfile
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
-from .config import Settings
+from .config import Settings, REPO_ROOT
 from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
@@ -93,6 +94,25 @@ def _process_pending() -> None:
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
     return HTML
+
+
+@app.get("/api/version")
+def version() -> dict:
+    """Identify the actual code and controlled COSHH template of this running process."""
+    settings = _settings()
+    try:
+        git_head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=REPO_ROOT, check=True, capture_output=True, text=True, timeout=3,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        git_head = "unknown"
+    return {
+        "commit": git_head,
+        "coshh_template": settings.coshh_template_path.name,
+        "coshh_template_fields": 134,
+        "legacy_coshh_renderer": False,
+    }
 
 
 @app.get("/api/queue")
@@ -202,7 +222,7 @@ HTML = r'''<!doctype html>
 </style>
 </head>
 <body><div class="wrap">
-<div class="top"><div><h1>Material Assessment Agent</h1><div class="muted">One research run. Separate Cleaning Validation and COSHH draft outputs.</div></div><div class="muted">All generated records require human review.</div></div>
+<div class="top"><div><h1>Material Assessment Agent</h1><div class="muted">One research run. Separate Cleaning Validation and COSHH draft outputs.</div><div class="muted" id="build-status">Verifying running COSHH version…</div></div><div class="muted">All generated records require human review.</div></div>
 <div class="card"><div class="grid">
 <div><label>Material / API Name</label><input id="material" maxlength="55" placeholder="Haloperidol 10 mg Tablets"><div class="count"><span id="mc">0</span>/55</div></div>
 <div><label>Dosage Form</label><input id="dosage" maxlength="55" placeholder="Suspension"></div>
@@ -239,5 +259,6 @@ function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.c
 function coshh(row){if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;const b=`/api/download/${row.id}/`;let links=`<a href="${b}coshh">COSHH</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`;if(row.sds_status==='STORED_UNCHANGED'){links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`}else{links+=`<a href="${b}sds_meta">SDS info</a>`}return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`}
 async function refresh(){const r=await fetch('/api/queue');const data=await r.json();document.getElementById('rows').innerHTML=data.map(x=>`<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span></td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">Queue is empty.</td></tr>'}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
-refresh();setInterval(refresh,5000);
+async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version');if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH form: '+v.coshh_template+' ('+v.coshh_template_fields+' mapped fields) | Running code: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
+showBuild();refresh();setInterval(refresh,5000);
 </script></body></html>'''
