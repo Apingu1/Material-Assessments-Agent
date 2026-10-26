@@ -1,0 +1,33 @@
+name: Commit revised COSHH master template
+on:
+  push:
+    branches:
+      - feature/coshh-assessment-suite
+    paths:
+      - scripts/update_controlled_coshh_master.py
+      - .github/workflows/commit-coshh-master.yml
+permissions:
+  contents: write
+jobs:
+  install-master:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install XML library
+        run: pip install lxml
+      - name: Apply exact uploaded Word template layout patch
+        run: python scripts/update_controlled_coshh_master.py
+      - name: Commit updated binary DOCX
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+          if ! git diff --cached --quiet; then
+            git commit -m "Update controlled ES.SOP.089.F01.V01 Word template: fire N/A and layout"
+            git push origin HEAD:feature/coshh-assessment-suite
+          fi
