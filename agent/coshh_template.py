@@ -72,22 +72,34 @@ def _short_join(values: list[str], *, limit: int = 4, max_chars: int = 260) -> s
 
 
 def _checkbox_content(sdt, selected: bool) -> None:
-    checkbox = sdt.find(f".//{{{W14_NS}}}checkbox")
+    """Toggle a native Word checkbox WITHOUT replacing its formatted content.
+
+    The approved COSHH template deliberately uses 20pt MS Gothic checkboxes
+    in the departmental PPE matrix (w:sz=40 in half-points), and 10pt
+    checkboxes elsewhere. Rebuilding an unformatted w:r was shrinking
+    all PPE marks to the surrounding paragraph's default font size.
+    """
+    checkbox = sdt.find(f"./{{{W_NS}}}sdtPr/{{{W14_NS}}}checkbox")
     if checkbox is None:
         return
     checked = checkbox.find(f"{{{W14_NS}}}checked")
     if checked is None:
-        checked = etree.SubElement(checkbox, f"{{{W14_NS}}}checked")
+        checked = etree.Element(f"{{{W14_NS}}}checked")
+        checkbox.insert(0, checked)
     checked.set(f"{{{W14_NS}}}val", "1" if selected else "0")
 
     content = sdt.find(f"{{{W_NS}}}sdtContent")
     if content is None:
-        return
-    for child in list(content):
-        content.remove(child)
-    run = etree.SubElement(content, f"{{{W_NS}}}r")
-    text = etree.SubElement(run, f"{{{W_NS}}}t")
-    text.text = "☒" if selected else "☐"
+        raise ValueError("Controlled COSHH checkbox is missing w:sdtContent")
+
+    # Preserve the template's original w:rPr (font, size, colour, styling),
+    # paragraph formatting and checked/unchecked glyph definitions.
+    text_nodes = content.xpath(".//w:t", namespaces=NS)
+    if not text_nodes:
+        raise ValueError("Controlled COSHH checkbox has no formatted glyph run")
+    text_nodes[0].text = "☒" if selected else "☐"
+    for text in text_nodes[1:]:
+        text.text = ""
 
 
 def _text_content(sdt, value: object) -> None:
@@ -324,6 +336,46 @@ def _activity_rows(assessment: COSHHAssessment) -> list[tuple[str, str, str, str
     return rows[:3]
 
 
+# Unambiguous CLP label pictograms that correspond to specific classified
+# H-statements. An SDS often embeds its diamond as an image, which PyMuPDF
+# text extraction cannot expose to the language model. Do not lose the
+# pictogram just because structured PDF research returned pictograms=[].
+# The map is intentionally explicit; H412 and H413 alone are not GHS09.
+_GHS_FROM_H = {
+    "GHS01": {"H200", "H201", "H202", "H203", "H204", "H205", "H240", "H241"},
+    "GHS02": {"H220", "H221", "H222", "H223", "H224", "H225", "H226", "H228",
+              "H242", "H250", "H251", "H252", "H260", "H261"},
+    "GHS03": {"H270", "H271", "H272"},
+    "GHS04": {"H280", "H281"},
+    "GHS05": {"H290", "H314", "H318"},
+    "GHS06": {"H300", "H301", "H310", "H311", "H330", "H331"},
+    "GHS07": {"H302", "H312", "H315", "H317", "H319", "H332", "H335", "H336"},
+    "GHS08": {"H304", "H334", "H340", "H341", "H350", "H351", "H360", "H361",
+              "H362", "H370", "H371", "H372", "H373"},
+    "GHS09": {"H400", "H410", "H411"},
+}
+
+
+def _pictograms_from_sds_hazards(research) -> set[str]:
+    """Combine explicit SDS pictograms with definitive classified H-codes.
+
+    Do not infer a pictogram from general health effects, product description,
+    dose, or precautionary statements; only CLP H-codes reported as hazards.
+    If the skull pictogram applies, the exclamation mark is suppressed under
+    CLP label precedence rules.
+    """
+    selected = {code.value for code in research.pictograms}
+    observed = set()
+    for statement in research.hazard_statements:
+        observed.update(re.findall(r"(?<![A-Z0-9])H[234]\d{2}(?!\d)", statement.upper()))
+    for pictogram, codes in _GHS_FROM_H.items():
+        if observed.intersection(codes):
+            selected.add(pictogram)
+    if "GHS06" in selected:
+        selected.discard("GHS07")
+    return selected
+
+
 def _sds_title(assessment: COSHHAssessment) -> str:
     sds = assessment.research.sds
     parts = _dedupe([sds.product_name, sds.manufacturer])
@@ -344,7 +396,7 @@ def build_coshh_template_values(
     research = assessment.research
     physical = _physical_form_flags(research.physical_form)
     signal = research.signal_word.upper()
-    selected_pictograms = {code.value for code in research.pictograms}
+    selected_pictograms = _pictograms_from_sds_hazards(research)
     areas = set(item.coshh_areas)
 
     values: dict[str, object] = {

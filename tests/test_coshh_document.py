@@ -202,3 +202,100 @@ def test_coshh_only_rebuild_populates_exact_controlled_template_offline(tmp_path
     verified = verify_generated_coshh_document(output, settings.coshh_template_path)
     assert verified["template_sha256"] == result["template_sha256"]
     assert (tmp_path / "coshh_assessment.json").exists()
+
+
+def test_ghs07_derived_from_levomepromazine_sds_when_pdf_image_not_extracted():
+    """BP Levomepromazine Maleate SDS Section 2 has GHS07 image + H codes."""
+    from agent.coshh_template import _pictograms_from_sds_hazards
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(
+        pictograms=[],  # PDF image is invisible to text-only research
+        hazard_statements=[
+            "H302 - Harmful if swallowed",
+            "H317 - May cause an allergic skin reaction",
+            "H319 - Causes serious eye irritation",
+            "H336 - May cause drowsiness or dizziness",
+            "H413 - May cause long lasting harmful effects to aquatic life",
+        ],
+    )
+    symbols = _pictograms_from_sds_hazards(source)
+    assert symbols == {"GHS07"}  # H413 does not give GHS09
+    item = MaterialInput(material_name="Levomepromazine Maleate Powder")
+    research = _research()
+    research.pictograms = []
+    research.hazard_statements = source.hazard_statements
+    research.coshh_substance_name = "Levomepromazine maleate"
+    assessment = build_coshh_assessment(item, research)
+    sds = StoredSDS(
+        status="STORED_UNCHANGED", original_url="", resolved_pdf_url="",
+        local_path="", sha256="", note="",
+    )
+    fields = build_coshh_template_values(assessment, item, sds)
+    assert fields["SDS_PICTOGRAM_GHS07"] is True
+    assert fields["SDS_PICTOGRAM_GHS09"] is False
+
+
+def test_pictogram_precedence_and_other_common_sds_h_codes():
+    from agent.coshh_template import _pictograms_from_sds_hazards
+    from types import SimpleNamespace
+
+    cases = [
+        (["H314", "H318"], {"GHS05"}),
+        (["H350", "H411"], {"GHS08", "GHS09"}),
+        (["H400", "H412"], {"GHS09"}),
+        (["H413"], set()),
+        (["H301", "H302"], {"GHS06"}),
+    ]
+    for statements, expected in cases:
+        assert _pictograms_from_sds_hazards(
+            SimpleNamespace(pictograms=[], hazard_statements=statements)
+        ) == expected
+
+
+def test_all_80_checkbox_controls_preserve_original_font_sizes_and_styles(tmp_path):
+    """A checked PPE glyph MUST stay the 20 pt size from the approved Word form."""
+    from agent.coshh_template import _fill_tagged_template
+
+    template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    output = tmp_path / "checkbox_fidelity.docx"
+    input_values = {
+        "SDS_PICTOGRAM_GHS07": True,
+        "DER_PPE_QC_FUME_HOOD": True,
+        "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR": True,
+        "DER_PPE_RND_NITRILE_GLOVES": False,
+        "DER_EXPOSURE_INHALATION_YES": True,
+    }
+    _fill_tagged_template(template, output, input_values)
+    ns = {
+        "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "w14": "http://schemas.microsoft.com/office/word/2010/wordml",
+    }
+
+    def checkboxes(path):
+        with ZipFile(path, "r") as zf:
+            root = etree.fromstring(zf.read("word/document.xml"))
+        checks = {}
+        for sdt in root.xpath(".//w:sdt[w:sdtPr/w14:checkbox]", namespaces=ns):
+            tag = sdt.xpath("./w:sdtPr/w:tag/@w:val", namespaces=ns)[0]
+            rpr = sdt.xpath("./w:sdtContent//w:r/w:rPr", namespaces=ns)
+            checks[tag] = {
+                "styles": [etree.tostring(x, method="c14n") for x in rpr],
+                "size": sdt.xpath("./w:sdtContent//w:rPr/w:sz/@w:val", namespaces=ns),
+                "glyph": sdt.xpath("./w:sdtContent//w:t/text()", namespaces=ns),
+                "checked": sdt.xpath("./w:sdtPr/w14:checkbox/w14:checked/@w14:val", namespaces=ns),
+            }
+        return checks
+
+    before, after = checkboxes(template), checkboxes(output)
+    assert len(before) == len(after) == 80
+    assert before.keys() == after.keys()
+    for tag in before:
+        assert before[tag]["styles"] == after[tag]["styles"], tag
+        assert before[tag]["size"] == after[tag]["size"], tag
+    assert before["DER_PPE_QC_FUME_HOOD"]["size"] == ["40"]
+    assert after["DER_PPE_QC_FUME_HOOD"]["glyph"] == ["☒"]
+    assert after["DER_PPE_QC_FUME_HOOD"]["checked"] == ["1"]
+    assert after["SDS_PICTOGRAM_GHS07"]["glyph"] == ["☒"]
+    assert after["SDS_PICTOGRAM_GHS07"]["checked"] == ["1"]
+    assert after["DER_PPE_RND_NITRILE_GLOVES"]["glyph"] == ["☐"]

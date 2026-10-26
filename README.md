@@ -94,6 +94,25 @@ The COSHH module now populates Eaststone's approved-layout **ES.SOP.089.F01.V01 
 
 The agent writes only tagged fields and preserves the template's page structure. It does not sign, approve or confirm control adequacy on behalf of an Eaststone reviewer.
 
+### Pictogram and checkbox fidelity
+
+The generator retains every controlled Word checkbox's original formatted run.
+In particular, the approved PPE matrix has 20 pt checkbox glyphs (Word
+`w:sz=40`), not the smaller 10 pt glyphs used for other fields. Only the
+checked state and visible glyph are changed.
+
+The Safety Data Sheet may encode its GHS diamonds as **images**, so a
+text-extraction research model can return `pictograms=[]` despite Section 2
+listing classified H-statements. The COSHH renderer therefore cross-checks
+explicit pictograms against the classified H-codes in SDS-derived hazard
+statements before ticking the controlled hazard boxes. It applies CLP skull /
+exclamation precedence and does not infer the environmental pictogram from
+H412 or H413 alone. The SDS and the resulting selections remain subject to
+competent-person review. For Levomepromazine Maleate, the official British
+Pharmacopoeia SDS (26 August 2026) reports H302, H317, H319 and H336, thus
+GHS07 is selected even if its PDF-embedded pictogram was not identified by
+text extraction.
+
 ### SDS-first research
 
 The COSHH researcher seeks one strong SDS first, preferring:
