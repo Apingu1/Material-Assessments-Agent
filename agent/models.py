@@ -331,6 +331,22 @@ class MaterialInput(StrictModel):
     frequency: str = "Infrequent"
     duration: str = "<30 mins"
 
+    def process_context_for_research(self) -> str:
+        """Explicit input process is separate from clinical finished dosage."""
+        notes = {
+            StartingForm.TABLETS: (
+                "Incoming starting form: tablets. Production crushes them to "
+                "powder prior to compounding, with potential airborne dust."
+            ),
+            StartingForm.POWDER: "Incoming starting form: powder; open handling may release dust.",
+            StartingForm.GRANULES: "Incoming starting form: granules.",
+            StartingForm.LIQUID: "Incoming starting form: liquid or solution.",
+            StartingForm.OTHER: "Incoming starting form: other, as separately described.",
+        }
+        intro = notes.get(self.starting_form, "")
+        return "\n".join(text for text in (intro, self.product_context.strip()) if text)
+
+
 
 class ScoringResult(StrictModel):
     hazard_score_a: int
