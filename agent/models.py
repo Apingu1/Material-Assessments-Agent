@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Conclusion(str, Enum):
@@ -330,6 +330,14 @@ class MaterialInput(StrictModel):
     existing_controls: str = ""
     frequency: str = "Infrequent"
     duration: str = "<30 mins"
+
+    @model_validator(mode="after")
+    def include_tablet_crushing_in_production(self):
+        # Site SOP: incoming tablets are always crushed in Production.
+        # The finished dosage_form field has no influence on this decision.
+        if self.starting_form == StartingForm.TABLETS and COSHHArea.PRODUCTION not in self.coshh_areas:
+            self.coshh_areas.append(COSHHArea.PRODUCTION)
+        return self
 
     def process_context_for_research(self) -> str:
         """Explicit input process is separate from clinical finished dosage."""

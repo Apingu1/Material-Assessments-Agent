@@ -145,6 +145,22 @@ def test_controlled_master_retagged_half_face_and_20pt_checkboxes_intact():
     assert control[0].xpath(".//w:sdtContent//w:rPr/w:sz/@w:val",namespaces=ns)==["40"]
 
 
+def test_tablet_starting_form_adds_required_production_area_without_dosage_confusion():
+    item=MaterialInput(
+        material_name="Example incoming tablets", starting_form="TABLETS",
+        dosage_forms="Oral suspension",
+        coshh_areas=[COSHHArea.QC],
+    )
+    assert COSHHArea.PRODUCTION in item.coshh_areas
+    assert COSHHArea.QC in item.coshh_areas
+    # A finished tablet product manufactured from incoming powder is different.
+    powder=MaterialInput(
+        material_name="Raw API Powder", starting_form="POWDER",
+        dosage_forms="Tablets", coshh_areas=[COSHHArea.QC],
+    )
+    assert COSHHArea.PRODUCTION not in powder.coshh_areas
+
+
 def test_starting_form_ui_and_api(tmp_path,monkeypatch):
     assert 'id="starting-form"' in web.HTML
     assert "Tablets (crushed to powder in Production)" in web.HTML
