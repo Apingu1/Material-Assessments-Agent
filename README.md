@@ -228,6 +228,36 @@ not modified by this compatibility fix. A `RESEARCHING` record without a
 detected web worker is highlighted for checking rather than automatically
 restarted (which could repeat paid research).
 
+## Queue filtering and zero-credit bulk save
+
+The Assessment Queue includes a material/ID search and statuses for CV
+completed, CV pending review, PDE required/recommended, COSHH completed/pending
+review, COSHH master-template update needed, failures, pending, and running.
+These are **view filters** only; neither filtering nor exporting triggers the
+OpenAI research engine.
+
+**Save All / Export** opens a per-material document selection dialog for
+the currently filtered queue. Each material can independently include:
+- CV dossier Word (default when available)
+- CV screening form Word
+- CV dossier PDF
+- COSHH assessment Word (default when the current controlled template verifies)
+- COSHH assessment PDF
+
+The backend preflights each document against its queue record and physical
+output; current COSHH template verification is mandatory. The export is
+all-or-nothing: a stale, failed, or missing selected document produces an
+actionable error rather than being silently skipped. To update a superseded
+COSHH document, use **Update and download COSHH (no AI)** first.
+
+On supported desktop Chromium browsers, **Choose folder & save files** opens a
+browser-controlled folder picker and writes separate files into a subfolder
+for each material. Websites cannot write to arbitrary paths without explicit
+user permission; the folder picker is required for that mode. **Download ZIP**
+works as a portable fallback, preserving the same per-material folders and
+offering standard browser download/save behaviour. No OpenAI API calls are
+used by preflight, folder export, or ZIP creation.
+
 ## Web interface
 
 Start the local UI:
