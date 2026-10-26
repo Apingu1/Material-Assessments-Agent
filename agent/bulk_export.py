@@ -6,6 +6,7 @@ master; an earlier Word revision cannot be silently included in a ZIP.
 """
 from __future__ import annotations
 
+import json
 import re
 import tempfile
 from dataclasses import dataclass
@@ -102,6 +103,19 @@ def resolve_export(request: BulkExportRequest, queue, settings) -> list[ExportFi
             if not path.is_relative_to(output_dir):
                 raise HTTPException(403, f"Assessment #{entry.material_id}: invalid output location")
             if kind.startswith("coshh"):
+                # Match /api/download's provenance gate so directory saving
+                # can't pass preflight and then fail on each individual GET.
+                status_path = output_dir / "COSHH_STATUS.json"
+                try:
+                    status_record = json.loads(status_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    status_record = {}
+                if status_record.get("template_verified") is not True:
+                    raise HTTPException(
+                        409, f"Assessment #{entry.material_id}: COSHH has no "
+                        "completed controlled-template verification. Refresh "
+                        "the form with no AI before exporting."
+                    )
                 docx = sorted(output_dir.glob(PATTERNS["coshh"]))
                 if len(docx) != 1:
                     raise HTTPException(409, f"Assessment #{entry.material_id}: COSHH DOCX is missing")

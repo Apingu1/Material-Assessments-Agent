@@ -190,3 +190,20 @@ def test_html_contains_filter_and_folder_zip_controls():
     assert "/api/bulk-export/zip" in web.HTML
     assert "/api/bulk-export/prepare" in web.HTML
     assert "Select all COSHH Word" in web.HTML
+
+
+def test_bulk_export_honours_coshh_verification_flag(tmp_path, monkeypatch):
+    import json
+    queue, settings, id, folder, cv, coshh = _fixture(tmp_path, monkeypatch)
+    (folder / "COSHH_STATUS.json").write_text(json.dumps({
+        "status": "REVIEW_REQUIRED", "template_verified": False
+    }), encoding="utf-8")
+    selection = BulkExportRequest(entries=[{
+        "material_id": id, "kinds": ["cv_dossier", "coshh"]
+    }])
+    with pytest.raises(HTTPException, match="no completed controlled-template verification"):
+        resolve_export(selection, queue, settings)
+    assert len(resolve_export(
+        BulkExportRequest(entries=[{"material_id": id, "kinds": ["cv_dossier"]}]),
+        queue, settings,
+    )) == 1
