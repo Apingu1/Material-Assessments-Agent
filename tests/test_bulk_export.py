@@ -50,6 +50,14 @@ def _fixture(tmp_path, monkeypatch):
     cv_form.write_bytes(b"Saved CV screening form bytes")
     coshh = output_dir / "Dihydrocodeine - COSHH Assessment - DRAFT.docx"
     coshh.write_bytes(TEMPLATE.read_bytes())  # Exact approved layout.
+    # Single-file and bulk downloads must both honour the stored verification
+    # flag; the fixture represents a *completed* previously verified run.
+    import json
+    (output_dir / "COSHH_STATUS.json").write_text(json.dumps({
+        "status": "REVIEW_REQUIRED",
+        "sds_status": "STORED_UNCHANGED",
+        "template_verified": True,
+    }), encoding="utf-8")
     queue.update(
         item_id,
         "PDE_REQUIRED",
