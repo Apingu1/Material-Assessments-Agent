@@ -12,6 +12,9 @@ def build_coshh_docx(
     stored_sds: StoredSDS,
     output_path: Path,
     template_path: Path | None = None,
+    *,
+    reference: str = "",
+    completion_date=None,
 ) -> None:
     """Populate the controlled ES.SOP.089.F01.V01 layout; never generate a legacy form."""
     if template_path is None:
@@ -21,7 +24,10 @@ def build_coshh_docx(
         )
     from .coshh_template import build_coshh_from_template
 
-    build_coshh_from_template(assessment, item, stored_sds, template_path, output_path)
+    build_coshh_from_template(
+        assessment, item, stored_sds, template_path, output_path,
+        reference=reference, completion_date=completion_date,
+    )
 
 
 def coshh_review_summary(assessment: COSHHAssessment, stored_sds: StoredSDS) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -31,7 +31,7 @@ _PPE_SUFFIXES = (
 )
 _HUMAN_TEXT_TAGS = (
     "HUM_CONDITIONS_RESTRICTIONS",
-    "HUM_NEXT_REVIEW_DATE",
+    # Auto-generated from the assessment completion date (+5 calendar years).
     "HUM_COMMUNICATION_DATE_RECORD",
     "HUM_ASSESSED_NAME_POSITION",
     "HUM_ASSESSED_SIGNATURE",
@@ -163,9 +163,10 @@ def validate_coshh_template(template_path: Path) -> None:
         root = etree.fromstring(archive.read("word/document.xml"))
     tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
     required = {"RES_SUBSTANCE_PRODUCT", "SDS_HAZARD_STATEMENTS",
-                "DER_PPE_QC_FUME_HOOD", "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR",
-                "HUM_APPROVED_SIGNATURE"}
-    if len(tags) != 134 or not required.issubset(tags):
+                "DER_FIRE_NA", "DER_PPE_QC_FUME_HOOD",
+                "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR", "HUM_APPROVED_SIGNATURE"}
+    forbidden = {"USR_MATERIAL_CODE"}
+    if len(tags) != 134 or not required.issubset(tags) or tags.intersection(forbidden):
         raise ValueError(
             f"Wrong COSHH template: expected 134 ES.SOP.089.F01.V01 tagged controls, "
             f"found {len(tags)} in {template_path}"
@@ -183,7 +184,7 @@ def verify_generated_coshh_document(output_path: Path, template_path: Path) -> d
                 raise ValueError(f"COSHH output missing controlled package part {required}")
         root = etree.fromstring(output.read("word/document.xml"))
         tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
-        if len(tags) != 134:
+        if len(tags) != 134 or "DER_FIRE_NA" not in tags or "USR_MATERIAL_CODE" in tags:
             raise ValueError(f"Generated COSHH output is not the controlled form: {len(tags)} tags")
         if output.read("word/styles.xml") != source.read("word/styles.xml"):
             raise ValueError("Generated COSHH style part differs from the controlled template")
@@ -280,23 +281,58 @@ def _ppe_flags(activities, *, qc: bool = False) -> dict[str, bool]:
 
 
 def _matrix_values(assessment: COSHHAssessment) -> dict[str, bool]:
+    """Apply mandatory Eaststone site PPE independently of model suggestions.
+
+    The grouped Office/Warehouse row represents normally sealed material:
+    warehouse operators are expressly exempt from routine gloves, and this
+    combined checkbox is not ticked just because the LLM advised gloves.
+    PPE for unusual exposed office tasks needs competent-person review.
+    """
     activities = assessment.activities
     groups = {
         "PRODUCTION": [x for x in activities if x.area == COSHHArea.PRODUCTION],
         "RND": [x for x in activities if x.area == COSHHArea.R_AND_D],
-        "QC": [x for x in activities if x.area == COSHHArea.QC],
+        "QC": [x for x in activities if x.area in (COSHHArea.QC, COSHHArea.SAMPLING)],
         "OFFICE_WAREHOUSE": [
             x for x in activities if x.area in {COSHHArea.GOODS_IN_WAREHOUSE, COSHHArea.OFFICE}
         ],
-        "SPILLAGE": [x for x in activities if "spill" in f"{x.activity} {x.exposure_scenario}".lower()],
+        "SPILLAGE": [
+            x for x in activities
+            if x.area == COSHHArea.HOUSEKEEPING
+            or "spill" in f"{x.activity} {x.exposure_scenario}".lower()
+        ],
     }
-    result: dict[str, bool] = {}
+    result = {}
     for prefix, group in groups.items():
         flags = _ppe_flags(group, qc=prefix == "QC")
+        if prefix in {"PRODUCTION", "RND", "QC", "SPILLAGE"}:
+            flags["LABCOAT_GOWNS"] = True
+            flags["GLASSES_GOGGLES"] = True
+            flags["NITRILE_GLOVES"] = True
+        if prefix == "PRODUCTION":
+            flags["OVERSHOES"] = True
+            flags["SURGICAL_MASK"] = not flags["FULL_FACE_RESPIRATOR"]
+        if prefix == "OFFICE_WAREHOUSE":
+            # Sealed goods-in handling does not mandate nitrile gloves/goggles.
+            flags["NITRILE_GLOVES"] = False
+            flags["GLASSES_GOGGLES"] = False
+        if prefix == "QC":
+            # QC uses enclosed externally extracted fume hoods, not RPE.
+            flags["FULL_FACE_RESPIRATOR"] = False
+            flags["SURGICAL_MASK"] = False
         for suffix in _PPE_SUFFIXES:
             result[f"DER_PPE_{prefix}_{suffix}"] = flags[suffix]
-    return result
 
+    if result["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"]:
+        result["DER_PPE_PRODUCTION_SURGICAL_MASK"] = False
+        result["DER_PPE_RND_FULL_FACE_RESPIRATOR"] = True
+        result["DER_PPE_RND_SURGICAL_MASK"] = False
+        result["DER_PPE_QC_FUME_HOOD"] = True
+
+    if result["DER_PPE_RND_FULL_FACE_RESPIRATOR"]:
+        result["DER_PPE_RND_SURGICAL_MASK"] = False
+
+    return result
 
 def _worst_risk(activities, field: str) -> RiskBand:
     return max((getattr(activity, field) for activity in activities), key=lambda x: _RISK_ORDER[x])
@@ -392,20 +428,31 @@ def build_coshh_template_values(
     assessment: COSHHAssessment,
     item: MaterialInput,
     stored_sds: StoredSDS,
+    *,
+    reference: str = "",
+    completion_date: date | None = None,
 ) -> dict[str, object]:
     research = assessment.research
     physical = _physical_form_flags(research.physical_form)
     signal = research.signal_word.upper()
     selected_pictograms = _pictograms_from_sds_hazards(research)
     areas = set(item.coshh_areas)
+    completed = completion_date or date.today()
+    try:
+        next_review = completed.replace(year=completed.year + 5)
+    except ValueError:
+        # February 29 to February 28 for a non-leap review year.
+        next_review = completed.replace(year=completed.year + 5, day=28)
+    fire_co2 = bool(re.search(r"carbon dioxide|\\bco2\\b|co₂", research.firefighting_media, re.I))
+    fire_foam = bool(re.search(r"\\bfoam\\b", research.firefighting_media, re.I))
 
     values: dict[str, object] = {
-        "USR_ASSESSMENT_REFERENCE": "",
-        "USR_ASSESSMENT_VERSION": "",
+        "USR_ASSESSMENT_REFERENCE": reference,
+        "USR_ASSESSMENT_VERSION": "1",
         "RES_SUBSTANCE_PRODUCT": research.coshh_substance_name,
-        "DER_ASSESSMENT_DATE": datetime.now().strftime("%d%b%y").upper(),
+        "DER_ASSESSMENT_DATE": completed.strftime("%d%b%y").upper(),
+        "HUM_NEXT_REVIEW_DATE": next_review.strftime("%d%b%y").upper(),
         "RES_CAS_NUMBER": research.sds.cas_number or "",
-        "USR_MATERIAL_CODE": "",
         "USR_PROCESS_INTENDED_USE": item.product_context or research.material_use_context,
         "USR_EXPOSED_WAREHOUSE": COSHHArea.GOODS_IN_WAREHOUSE in areas or _people_mentions(item, r"\bwarehouse\b|goods[ -]?in"),
         "USR_EXPOSED_OFFICE": COSHHArea.OFFICE in areas or _people_mentions(item, r"\boffice\b"),
@@ -434,8 +481,9 @@ def build_coshh_template_values(
         "SDS_FIRST_AID_INGESTION": research.first_aid_ingestion,
         "EAS_SPILLAGE_RESPONSE": research.spill_response,
         "EAS_ENVIRONMENTAL_RESPONSE": research.environmental_precautions,
-        "DER_FIRE_CO2": bool(re.search(r"carbon dioxide|\bco2\b|co₂", research.firefighting_media, re.I)),
-        "DER_FIRE_FOAM": bool(re.search(r"\bfoam\b", research.firefighting_media, re.I)),
+        "DER_FIRE_CO2": fire_co2,
+        "DER_FIRE_FOAM": fire_foam,
+        "DER_FIRE_NA": not (fire_co2 or fire_foam),
         "USR_MONITORING_RESPONSIBLE_PERSON": "",
         "EAS_STORAGE_SEGREGATION": research.storage_handling,
         "EAS_WASTE_DISPOSAL": research.disposal,
@@ -496,10 +544,16 @@ def build_coshh_from_template(
     stored_sds: StoredSDS,
     template_path: Path,
     output_path: Path,
+    *,
+    reference: str = "",
+    completion_date: date | None = None,
 ) -> None:
     """Populate ES.SOP.089.F01.V01 without resizing or restructuring the controlled form."""
     _fill_tagged_template(
         template_path,
         output_path,
-        build_coshh_template_values(assessment, item, stored_sds),
+        build_coshh_template_values(
+            assessment, item, stored_sds,
+            reference=reference, completion_date=completion_date,
+        ),
     )
