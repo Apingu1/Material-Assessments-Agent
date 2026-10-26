@@ -94,6 +94,36 @@ The COSHH module now populates Eaststone's approved-layout **ES.SOP.089.F01.V01 
 
 The agent writes only tagged fields and preserves the template's page structure. It does not sign, approve or confirm control adequacy on behalf of an Eaststone reviewer.
 
+### Site-wide PPE rules and references
+
+The controlled Section 5 PPE matrix applies site requirements to **every**
+assessment, irrespective of whether an SDS enumerates routine workplace PPE:
+labcoat/gown, glasses/goggles and nitrile gloves in Production, R&D, QC and
+Spillage. Production always has overshoes and a surgical face mask unless a
+full-face respirator is required. When Production needs full-face RPE, R&D
+also needs full-face RPE and QC uses a contained extracted fume hood (without
+routine QC RPE). Spillage overshoes depend on the scenario. Normally sealed
+warehouse handling is exempt from routine gloves; the combined Office /
+Warehouse row is not automatically marked as requiring those gloves.
+Section 6 activity narratives now derive their PPE wording from the same
+authoritative site matrix, preventing disagreement between the sections.
+
+Assessment references are allocated with a SQLite `BEGIN IMMEDIATE`
+transaction to prevent duplicates between concurrent generations:
+`ES.COSHH.001`, `ES.COSHH.002`, and so forth. A retry or no-AI refresh
+retains its original reference and completion date. All COSHH versions begin
+at `1`; the next review is automatically set five calendar years after
+the assessment completion date. Reference numbers are deliberately not reused
+if a generation fails after reservation (traceability takes priority).
+
+The revised controlled Word resource removes Material Code and maps the
+additional `DER_FIRE_NA` checkbox. If neither CO2 nor Foam is selected
+for the recorded SDS firefighting media, N/A is checked; reviewers must
+confirm suitability of any other extinguisher type. First-aid green rows
+have keep-with-next pagination so all four remain together as text expands.
+No additional model calls are required to reformat a completed assessment
+via **Refresh form (no AI)**.
+
 ### No-credit refresh of an existing COSHH document
 
 After code updates, a completed assessment's saved `coshh_assessment.json`

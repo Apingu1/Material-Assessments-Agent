@@ -377,3 +377,24 @@ def test_coshh_fire_none_checkbox_and_auto_dates():
     v=build_coshh_template_values(assessment,item,stored)
     assert v["DER_FIRE_CO2"] and v["DER_FIRE_FOAM"]
     assert v["DER_FIRE_NA"] is False
+
+
+def test_activity_controls_ppe_mentions_mandatory_site_protection():
+    from agent.coshh_template import _activity_rows
+    research = _research()
+    item = MaterialInput(
+        material_name="Dihydrocodeine powder",
+        coshh_areas=[COSHHArea.GOODS_IN_WAREHOUSE,COSHHArea.QC,
+                     COSHHArea.PRODUCTION,COSHHArea.R_AND_D],
+    )
+    assessment = build_coshh_assessment(item,research)
+    for activity in assessment.activities:
+        activity.ppe.clear()
+    rows = _activity_rows(assessment)
+    qc = next(row for row in rows if row[0].startswith("QC / Sampling"))
+    prod = next(row for row in rows if row[0].startswith("Production / R&D"))
+    for row in (qc,prod):
+        assert "labcoat/gown" in row[2]
+        assert "goggles" in row[2]
+        assert "nitrile gloves" in row[2]
+    assert "overshoes" in prod[2]

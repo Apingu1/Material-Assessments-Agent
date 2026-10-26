@@ -346,6 +346,17 @@ def _activity_rows(assessment: COSHHAssessment) -> list[tuple[str, str, str, str
         ("Spillage / Housekeeping", {COSHHArea.HOUSEKEEPING}),
     ]
     rows: list[tuple[str, str, str, str, str]] = []
+    site_ppe = _matrix_values(assessment)
+    ppe_names = {
+        "LABCOAT_GOWNS": "labcoat/gown",
+        "GLASSES_GOGGLES": "goggles",
+        "FACE_GUARD_VISOR": "face visor",
+        "OVERSHOES": "overshoes",
+        "NITRILE_GLOVES": "nitrile gloves",
+        "SURGICAL_MASK": "surgical mask",
+        "FULL_FACE_RESPIRATOR": "full-face respirator",
+        "FUME_HOOD": "extracted fume hood",
+    }
     for label, areas in grouping:
         group = [activity for activity in assessment.activities if activity.area in areas]
         if not group:
@@ -356,10 +367,20 @@ def _activity_rows(assessment: COSHHAssessment) -> list[tuple[str, str, str, str
         ] or group
         names = _dedupe([activity.activity for activity in preferred])
         controls = _dedupe([control for activity in preferred for control in activity.controls])
-        ppe = _dedupe([ppe for activity in preferred for ppe in activity.ppe])
-        controls_ppe = controls[:3]
-        if ppe:
-            controls_ppe.append("PPE: " + ", ".join(ppe[:4]))
+        area_prefixes = {
+            "Warehouse / Office": ("OFFICE_WAREHOUSE",),
+            "QC / Sampling": ("QC",),
+            "Production / R&D": ("PRODUCTION", "RND"),
+            "Spillage / Housekeeping": ("SPILLAGE",),
+        }[label]
+        required_ppe = [
+            name for suffix, name in ppe_names.items()
+            if any(site_ppe[f"DER_PPE_{prefix}_{suffix}"] for prefix in area_prefixes)
+        ]
+        # The Section 6 narrative must agree with the mandatory site PPE grid
+        # even when the SDS model has omitted labcoats, goggles or overshoes.
+        controls_ppe = (["PPE: " + ", ".join(required_ppe)] if required_ppe else [])
+        controls_ppe.extend(controls[:2])
         rows.append(
             (
                 label + " - " + _short_join(names, limit=3, max_chars=100),
