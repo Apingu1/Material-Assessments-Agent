@@ -100,8 +100,8 @@ The controlled Section 5 PPE matrix applies site requirements to **every**
 assessment, irrespective of whether an SDS enumerates routine workplace PPE:
 labcoat/gown, glasses/goggles and nitrile gloves in Production, R&D, QC and
 Spillage. Production always has overshoes and a surgical face mask unless a
-full-face respirator is required. When Production needs full-face RPE, R&D
-also needs full-face RPE and QC uses a contained extracted fume hood (without
+half-face respirator is required. When Production needs half-face RPE, R&D
+also needs half-face RPE and QC uses a contained extracted fume hood (without
 routine QC RPE). Spillage overshoes depend on the scenario. Normally sealed
 warehouse handling is exempt from routine gloves; the combined Office /
 Warehouse row is not automatically marked as requiring those gloves.
@@ -249,7 +249,7 @@ Supported areas:
 
 Goods In specifically distinguishes checking/opening **outer packaging** from opening the primary material container. A hazardous powder therefore does not automatically trigger high-level respiratory PPE simply because a transit carton is opened.
 
-Activity risk combines intrinsic hazard severity with exposure potential. PPE is task-specific and does not replace engineering controls. The Eaststone local rule uses a contained/extracted fume hood for QC airborne powder/vapour tasks, with no QC respirator selection. For Production/R&D, full-face respiratory protection with a task-appropriate powder and/or vapour filter is selected where airborne RPE is required; surgical masks are never accepted as airborne-hazard RPE. Where a relevant engineering or containment arrangement is unconfirmed, the draft flags it for human review rather than claiming control adequacy.
+Activity risk combines intrinsic hazard severity with exposure potential. PPE is task-specific and does not replace engineering controls. The Eaststone local rule uses a contained/extracted fume hood for QC airborne powder/vapour tasks, with no QC respirator selection. For Production/R&D, half-face respiratory protection with a task-appropriate powder and/or vapour filter is selected where airborne RPE is required; surgical masks are never accepted as airborne-hazard RPE. Where a relevant engineering or containment arrangement is unconfirmed, the draft flags it for human review rather than claiming control adequacy.
 
 ## Compatibility with older COSHH queue records
 
@@ -260,6 +260,35 @@ silently presenting an empty assessment list. Records already in SQLite are
 not modified by this compatibility fix. A `RESEARCHING` record without a
 detected web worker is highlighted for checking rather than automatically
 restarted (which could repeat paid research).
+
+### Starting material form and half-face RPE
+
+The new **Material starting form (as received)** field is distinct from
+finished dosage form, route and substance identity. It is stored with the
+material queue in SQLite (`starting_form`), accepted by the JSON API, CSV
+import and `--starting-form` CLI option. Existing SQLite and saved JSON
+records default to `UNSPECIFIED` and remain loadable.
+
+Select **Tablets** when the incoming site material is tablets: Production
+then adds an explicit **Crush tablets into powder** activity with foreseeable
+dust generation, and uses the site's **half-face respirator** with suitable
+particle filters. R&D matches the Production respiratory requirement; QC
+uses its contained externally-extracted fume hood. Powder starting materials
+require the half-face respirator during open handling when SDS-based hazard
+severity is medium/high or an inhalation hazard exists; an SDS-unclassified
+low-hazard powder does not automatically trigger half-face RPE. Surgical
+masks remain routine Production PPE only where respiratory protection is
+not indicated and are never counted as adequate hazardous-dust RPE.
+
+Section 5 of the controlled Word master now shows **Half-face respirator**
+rather than Full-face respirator, with all five checkboxes retagged
+`DER_PPE_*_HALF_FACE_RESPIRATOR`. The existing 20pt checkbox formatting is
+unchanged and the 134-field controlled template count is retained.
+Completed COSHH documents from the previous Word layout require **Refresh
+form (no AI)** to apply the new master. Suitable filters, engineering
+controls, fit testing, eye protection and control adequacy require competent
+human review. The Cleaning Validation assessment's finished dosage form is
+not used as evidence that the incoming raw material is tablets.
 
 ## Queue filtering and zero-credit bulk save
 

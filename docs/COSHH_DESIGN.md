@@ -52,7 +52,7 @@ Any failure is recorded in `COSHH_ERROR.txt` and
 
 ## Departmental controls and approval
 QC airborne handling uses the contained, externally extracted fume hood;
-Production/R&D use appropriate full-face respirators where required. The
+Production/R&D use appropriate half-face respirators where required. The
 fume hood remains in the controlled form's PPE matrix by Eaststone convention.
 The form retains all 9 current GB CLP pictogram options. All results are
 drafts, require appropriate review, and must be checked against the site

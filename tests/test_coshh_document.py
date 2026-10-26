@@ -106,13 +106,13 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
 
     values = build_coshh_template_values(assessment, item, stored)
     assert values["DER_PPE_QC_FUME_HOOD"] is True
-    assert values["DER_PPE_QC_FULL_FACE_RESPIRATOR"] is False
-    assert values["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"] is True
+    assert values["DER_PPE_QC_HALF_FACE_RESPIRATOR"] is False
+    assert values["DER_PPE_PRODUCTION_HALF_FACE_RESPIRATOR"] is True
     assert values["DER_PPE_PRODUCTION_LABCOAT_GOWNS"] is True
     assert values["DER_PPE_PRODUCTION_GLASSES_GOGGLES"] is True
     assert values["DER_PPE_PRODUCTION_OVERSHOES"] is True
     assert values["DER_PPE_PRODUCTION_SURGICAL_MASK"] is False
-    assert values["DER_PPE_RND_FULL_FACE_RESPIRATOR"] is True
+    assert values["DER_PPE_RND_HALF_FACE_RESPIRATOR"] is True
     assert values["DER_FIRE_NA"] is True
     assert values["USR_ASSESSMENT_VERSION"] == "1"
     assert values["HUM_NEXT_REVIEW_DATE"] != ""
@@ -271,7 +271,7 @@ def test_all_80_checkbox_controls_preserve_original_font_sizes_and_styles(tmp_pa
     input_values = {
         "SDS_PICTOGRAM_GHS07": True,
         "DER_PPE_QC_FUME_HOOD": True,
-        "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR": True,
+        "DER_PPE_PRODUCTION_HALF_FACE_RESPIRATOR": True,
         "DER_PPE_RND_NITRILE_GLOVES": False,
         "DER_EXPOSURE_INHALATION_YES": True,
     }
@@ -335,7 +335,7 @@ def test_site_wide_ppe_rules_without_model_selected_ppe():
     assert v["DER_PPE_PRODUCTION_OVERSHOES"]
     assert v["DER_PPE_PRODUCTION_SURGICAL_MASK"]
     assert v["DER_PPE_OFFICE_WAREHOUSE_NITRILE_GLOVES"] is False
-    assert v["DER_PPE_QC_FULL_FACE_RESPIRATOR"] is False
+    assert v["DER_PPE_QC_HALF_FACE_RESPIRATOR"] is False
 
 
 def test_production_rpe_is_shared_with_rnd_but_qc_uses_fume_hood():
@@ -345,15 +345,15 @@ def test_production_rpe_is_shared_with_rnd_but_qc_uses_fume_hood():
     assessment = build_coshh_assessment(item,research)
     for activity in assessment.activities:
         if activity.area == COSHHArea.PRODUCTION:
-            activity.ppe.append("Full-face respirator with appropriate filters")
+            activity.ppe.append("Half-face respirator with appropriate filters")
     stored = StoredSDS(status="STORED_UNCHANGED",original_url="",resolved_pdf_url="",local_path="",sha256="",note="")
     v = build_coshh_template_values(assessment,item,stored)
-    assert v["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"]
-    assert v["DER_PPE_RND_FULL_FACE_RESPIRATOR"]
+    assert v["DER_PPE_PRODUCTION_HALF_FACE_RESPIRATOR"]
+    assert v["DER_PPE_RND_HALF_FACE_RESPIRATOR"]
     assert v["DER_PPE_QC_FUME_HOOD"]
     assert not v["DER_PPE_PRODUCTION_SURGICAL_MASK"]
     assert not v["DER_PPE_RND_SURGICAL_MASK"]
-    assert not v["DER_PPE_QC_FULL_FACE_RESPIRATOR"]
+    assert not v["DER_PPE_QC_HALF_FACE_RESPIRATOR"]
 
 
 def test_coshh_fire_none_checkbox_and_auto_dates():

@@ -99,7 +99,7 @@ def test_high_concern_powder_weighing_requires_review_and_p3_when_controls_unkno
     weighing = next(x for x in assessment.activities if x.activity == "Weighing")
     assert weighing.initial_risk.value == "HIGH"
     assert weighing.review_required is True
-    assert any("Full-face respirator" in value for value in weighing.ppe)
+    assert any("Half-face respirator" in value for value in weighing.ppe)
     assert any("engineering" in flag.lower() for flag in assessment.review_flags)
 
 
