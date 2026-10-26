@@ -154,3 +154,85 @@ def test_completed_coshh_can_refresh_hazards_and_ppe_at_zero_ai_cost(tmp_path, m
     assert inspect("SDS_PICTOGRAM_GHS07")[0] == ["☒"]
     assert inspect("DER_PPE_QC_FUME_HOOD")[1] == ["40"]
     assert (tmp_path / "coshh_assessment.json").exists()
+
+
+
+def test_no_ai_word_refresh_succeeds_without_pdf_converter(tmp_path, monkeypatch):
+    """Regression for Dihydrocodeine #19 HTTP 409 from optional PDF generation."""
+    from types import SimpleNamespace
+    from agent import coshh_recovery
+    from agent.coshh_rules import build_coshh_assessment
+    from agent.models import MaterialInput
+    from tests.test_coshh_document import _research
+    import hashlib
+    import fitz
+    import json
+
+    material=MaterialInput(material_name="Dihydrocodeine powder")
+    research=_research()
+    research.coshh_substance_name="Dihydrocodeine"
+    research.sds.substance_name="Dihydrocodeine"
+    research.hazard_statements=["H302 Harmful if swallowed"]
+    assessment=build_coshh_assessment(material,research)
+    (tmp_path/"coshh_assessment.json").write_text(assessment.model_dump_json(indent=2))
+    (tmp_path/"COSHH_STATUS.json").write_text(json.dumps({
+        "status":"REVIEW_REQUIRED","template_verified":True,"sds_status":"STORED_UNCHANGED"
+    }))
+    old_word=tmp_path/"Dihydrocodeine - COSHH Assessment - DRAFT.docx"
+    old_word.write_bytes(b"OLD APPROVED-TEMPLATE DRAFT")
+    old_pdf=old_word.with_suffix(".pdf")
+    old_pdf.write_bytes(b"%PDF-old previous-version output")
+    sdspath=tmp_path/"sds"
+    sdspath.mkdir()
+    pdf=fitz.open()
+    pdf.new_page().insert_text((45,50),"Safety Data Sheet - Dihydrocodeine tartrate")
+    pdfbytes=pdf.tobytes()
+    pdf.close()
+    (sdspath/"Dihydrocodeine - Safety Data Sheet.pdf").write_bytes(pdfbytes)
+    (sdspath/"SDS_METADATA.json").write_text(json.dumps({
+        "sha256":hashlib.sha256(pdfbytes).hexdigest(),
+        "status":"STORED_UNCHANGED",
+        "identity_match":"NAME_MATCH:dihydrocodeine"
+    }))
+    monkeypatch.setattr(coshh_recovery,"load_existing_bundle",lambda _:SimpleNamespace(
+        material_input=material,identity=None,
+    ))
+    monkeypatch.setattr(coshh_recovery,"ResearchAgent",lambda *a,**k:(_ for _ in ()).throw(
+        AssertionError("No AI is permitted for form-only refresh")))
+    monkeypatch.setattr(coshh_recovery,"convert_docx_to_pdf",lambda *a,**k:None)
+    template=Path(__file__).resolve().parents[1]/"templates"/"ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    settings=SimpleNamespace(
+        coshh_template_path=template,
+        require_runtime=lambda:None,
+        generate_pdf=True,
+        database_path=tmp_path/"registry.db",
+    )
+    status=coshh_recovery.refresh_existing_coshh_document(settings,tmp_path)
+    assert status["document_refresh_ai_calls"]==0
+    assert status["template_verified"]
+    assert status["coshh_pdf_current"] is False
+    assert "Word refreshed" in status["coshh_pdf_warning"]
+    assert old_word.read_bytes().startswith(b"PK")  # Real regenerated Word ZIP.
+    from agent.coshh_template import verify_generated_coshh_document
+    verify_generated_coshh_document(old_word,template)
+    assert not old_pdf.exists()  # Do not offer a previous-version PDF.
+    history=list((tmp_path/".coshh-superseded").glob("*"))
+    assert len(history)==1
+    assert (history[0]/old_word.name).read_bytes()==b"OLD APPROVED-TEMPLATE DRAFT"
+    assert (history[0]/old_pdf.name).read_bytes()==b"%PDF-old previous-version output"
+    assert json.loads((tmp_path/"COSHH_STATUS.json").read_text())["coshh_pdf_current"] is False
+
+
+def test_no_ai_refresh_blocks_modified_sds_without_paying_for_research(tmp_path):
+    from agent.coshh_recovery import _stored_sds_for_form_refresh
+    import json,hashlib
+    sds=tmp_path/"sds"
+    sds.mkdir()
+    (sds/"Original - Safety Data Sheet.pdf").write_bytes(b"%PDF-modified-source")
+    (sds/"SDS_METADATA.json").write_text(json.dumps({
+        "status":"STORED_UNCHANGED",
+        "sha256":hashlib.sha256(b"%PDF-original-source").hexdigest(),
+    }))
+    import pytest
+    with pytest.raises(ValueError,match="checksum"):
+        _stored_sds_for_form_refresh(tmp_path)

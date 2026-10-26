@@ -110,6 +110,11 @@ def resolve_export(request: BulkExportRequest, queue, settings) -> list[ExportFi
                     status_record = json.loads(status_path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     status_record = {}
+                if kind == "coshh_pdf" and status_record.get("coshh_pdf_current") is False:
+                    raise HTTPException(
+                        409, f"Assessment #{entry.material_id}: COSHH PDF is unavailable "
+                        "after a Word-only refresh. Export its current Word document instead."
+                    )
                 if status_record.get("template_verified") is not True:
                     raise HTTPException(
                         409, f"Assessment #{entry.material_id}: COSHH has no "

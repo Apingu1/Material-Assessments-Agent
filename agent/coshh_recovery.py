@@ -141,8 +141,10 @@ def _stored_sds_for_form_refresh(output_dir: Path) -> StoredSDS:
         metadata = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise ValueError("Saved SDS metadata is unreadable") from exc
-    if metadata.get("status") != "STORED_UNCHANGED":
-        raise ValueError("The original SDS was not marked STORED_UNCHANGED")
+    # Earlier stored SDS metadata may omit the status key. Its immutable
+    # SHA-256 record still proves the archived bytes were not changed.
+    if metadata.get("status") not in (None, "STORED_UNCHANGED"):
+        raise ValueError("The original SDS was explicitly marked unavailable")
     digest = metadata.get("sha256", "")
     if not digest:
         raise ValueError("Original SDS checksum missing: manual provenance check needed")
