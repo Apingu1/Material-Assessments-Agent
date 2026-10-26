@@ -9,6 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import traceback
+from datetime import datetime, timezone
+from uuid import uuid4
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import BadZipFile
@@ -18,7 +20,7 @@ from .coshh_document import build_coshh_docx, coshh_review_summary
 from .coshh_rules import build_coshh_assessment
 from .coshh_template import verify_generated_coshh_document
 from .dossier import convert_docx_to_pdf
-from .models import MaterialInput, ResearchBundle
+from .models import COSHHAssessment, MaterialInput, ResearchBundle
 from .research import ResearchAgent
 from .sds import SDSStore, StoredSDS, _slug, _valid_sds_pdf, sds_search_names
 
@@ -115,6 +117,87 @@ def _existing_sds(output_dir: Path, bundle: ResearchBundle) -> StoredSDS | None:
         attempts=metadata.get("attempts") or [],
         identity_match=match,
     )
+
+
+def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dict:
+    """Re-render a completed COSHH from saved data; NEVER invoke an AI client.
+
+    Use the original saved research/assessment and SDS, preserving GxP source
+    provenance. Atomically replace Word/PDF outputs only after verifying their
+    controlled template formatting. The original research JSON is not changed.
+    """
+    import shutil
+
+    assessment_file = output_dir / "coshh_assessment.json"
+    if not assessment_file.is_file():
+        raise FileNotFoundError(
+            "A completed saved COSHH research record is required for no-AI form "
+            "refresh. Use COSHH-only research recovery if none is available."
+        )
+    settings.require_runtime()
+    bundle = load_existing_bundle(output_dir)
+    assessment = COSHHAssessment.model_validate_json(
+        assessment_file.read_text(encoding="utf-8")
+    )
+    if assessment.research.hazard_statements == []:
+        raise ValueError(
+            "The saved COSHH has no classified hazard statements: pictograms "
+            "cannot safely be reconstructed without checking the actual SDS."
+        )
+    stored = _existing_sds(output_dir, bundle)
+    if stored is None or stored.status != "STORED_UNCHANGED":
+        raise ValueError("A stored, identity-matched original SDS PDF is required")
+
+    existing = sorted(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
+    if len(existing) != 1:
+        raise ValueError(
+            "Expected exactly one existing COSHH draft; will not replace an "
+            "ambiguous or missing controlled document."
+        )
+    old_status_path = output_dir / "COSHH_STATUS.json"
+    old_status = json.loads(old_status_path.read_text(encoding="utf-8"))
+    if old_status.get("status") not in {"READY_FOR_REVIEW", "REVIEW_REQUIRED"}:
+        raise ValueError("COSHH must have completed before a no-AI form refresh")
+
+    staging = output_dir / (".coshh-refresh-" + uuid4().hex[:12])
+    staging.mkdir()
+    try:
+        staged_docx = staging / existing[0].name
+        build_coshh_docx(
+            assessment, bundle.material_input, stored, staged_docx,
+            template_path=settings.coshh_template_path,
+        )
+        verification = verify_generated_coshh_document(
+            staged_docx, settings.coshh_template_path
+        )
+        staged_pdf = None
+        if settings.generate_pdf:
+            convert_docx_to_pdf(staged_docx, staging)
+            staged_pdf = staged_docx.with_suffix(".pdf")
+            if not staged_pdf.exists():
+                raise RuntimeError("No PDF was produced from the refreshed COSHH")
+
+        # No changes to the research JSON or SDS PDF. Replace the Word file
+        # after successful verification; old COSHH retained if preflight fails.
+        staged_docx.replace(existing[0])
+        if staged_pdf is not None:
+            staged_pdf.replace(existing[0].with_suffix(".pdf"))
+
+        status = {
+            **old_status,
+            **verification,
+            "template": settings.coshh_template_path.name,
+            "template_verified": True,
+            "stage": "CONTROLLED_FORM_REFRESHED_NO_AI",
+            "document_refreshed_at": datetime.now(timezone.utc).isoformat(),
+            "document_refresh_ai_calls": 0,
+        }
+        old_status_path.write_text(
+            json.dumps(status, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        return status
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def regenerate_coshh_only(settings: Settings, output_dir: Path) -> dict:

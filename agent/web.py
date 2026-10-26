@@ -11,12 +11,15 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .config import Settings, REPO_ROOT
-from .coshh_recovery import regenerate_coshh_only, upload_sds_for_existing_run
+from .coshh_recovery import (
+    regenerate_coshh_only, refresh_existing_coshh_document,
+    upload_sds_for_existing_run,
+)
 from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-25-controlled-v6-queue-legacy-status-recovery"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v7-ghs-ppe-fidelity"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -282,6 +285,27 @@ def retry_coshh_only(material_id: int, background_tasks: BackgroundTasks) -> dic
     return {"started": True, "scope": "COSHH_ONLY", "cleaning_validation_rerun": False}
 
 
+@app.post("/api/coshh/{material_id}/refresh-form")
+def refresh_coshh_form(material_id: int) -> dict:
+    """Rebuild ONLY a finished Word/PDF COSHH; zero OpenAI requests."""
+    if not _worker_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="An assessment is already running.")
+    try:
+        settings = _settings()
+        output_dir = _output_dir(material_id)
+        try:
+            status = refresh_existing_coshh_document(settings, output_dir)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "refreshed": True,
+            "ai_calls": 0,
+            "template_verified": status["template_verified"],
+        }
+    finally:
+        _worker_lock.release()
+
+
 @app.post("/api/coshh/{material_id}/sds")
 async def attach_sds(material_id: int, file: UploadFile = File(...)) -> dict:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -432,7 +456,7 @@ function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.c
 function coshh(row){
 if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;
 const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;
-let links=verified?`<a href="${b}coshh">Controlled COSHH V01</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a>`:'';
+let links=verified?`<a href="${b}coshh">Controlled COSHH V01</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a><button class="secondary" style="padding:5px 8px;font-size:11px" onclick="refreshCoshhForm(${row.id})">Refresh form (no AI)</button>`:'';
 if(!verified && row.coshh_status==='FAILED'){
  links+=`<div class="error">COSHH not generated: ${esc(row.coshh_error||'Review diagnostics')}</div>`;
 }
@@ -445,6 +469,16 @@ links+=`<button class="secondary" style="padding:5px 8px;font-size:11px" onclick
 }
 links+=`<label class="filebtn secondary" style="padding:5px 8px;font-size:11px">Attach SDS PDF<input type="file" accept=".pdf,application/pdf" onchange="uploadSds(${row.id},this)"></label>`;
 return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`;
+}
+async function refreshCoshhForm(id){
+ if(!confirm('Refresh COSHH from previously saved hazard data and SDS? The existing Word/PDF will be replaced, but Cleaning Validation and SDS research will NOT rerun. AI calls: 0.'))return;
+ try{
+  const response=await fetch('/api/coshh/'+id+'/refresh-form',{method:'POST'});
+  const result=await response.json();
+  if(!response.ok)throw Error(result.detail||'COSHH form refresh failed');
+  note('COSHH form refreshed with corrected hazard pictograms and full-size PPE checkboxes. AI calls: 0. Please download the new Word/PDF.');
+ }catch(error){note('Unable to refresh COSHH: '+error.message);}
+ await refresh();
 }
 async function retryCoshh(id){
  if(!confirm('Rebuild COSHH from saved Cleaning Validation research and an SDS PDF? No Cleaning Validation re-run. If an SDS exists, one COSHH PDF-extraction AI call may be billed.'))return;

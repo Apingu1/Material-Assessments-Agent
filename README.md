@@ -94,6 +94,17 @@ The COSHH module now populates Eaststone's approved-layout **ES.SOP.089.F01.V01 
 
 The agent writes only tagged fields and preserves the template's page structure. It does not sign, approve or confirm control adequacy on behalf of an Eaststone reviewer.
 
+### No-credit refresh of an existing COSHH document
+
+After code updates, a completed assessment's saved `coshh_assessment.json`
+and original SDS PDF can be reused using **Refresh form (no AI)**. This
+repopulates the same controlled Word form and optional PDF using the already
+saved H-statements and workplace logic. It does not re-contact OpenAI,
+re-research Cleaning Validation or change the saved SDS/research JSON; it
+verifies the new Word package before replacing the previous file.
+No-AI refresh is deliberately blocked when no H-statements or original
+SDS were saved, to prevent unjustified automatic pictogram classifications.
+
 ### Pictogram and checkbox fidelity
 
 The generator retains every controlled Word checkbox's original formatted run.
