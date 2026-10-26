@@ -174,3 +174,48 @@ def test_starting_form_ui_and_api(tmp_path,monkeypatch):
     })
     assert reply.status_code==200,reply.text
     assert queue.get_row(reply.json()["id"])["starting_form"]=="TABLETS"
+
+
+
+def test_existing_sqlite_queue_migrates_without_losing_previous_assessments(tmp_path):
+    import sqlite3
+    db=tmp_path/"old"/"queue.db"
+    db.parent.mkdir()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """CREATE TABLE materials (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               material_name TEXT NOT NULL,
+               dosage_forms TEXT NOT NULL DEFAULT '',
+               routes TEXT NOT NULL DEFAULT '',
+               product_context TEXT NOT NULL DEFAULT '',
+               coshh_areas TEXT NOT NULL DEFAULT 'GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION',
+               people_exposed TEXT NOT NULL DEFAULT '',
+               typical_quantity TEXT NOT NULL DEFAULT '',
+               existing_controls TEXT NOT NULL DEFAULT '',
+               frequency TEXT NOT NULL DEFAULT 'Infrequent',
+               duration TEXT NOT NULL DEFAULT '<30 mins',
+               status TEXT NOT NULL DEFAULT 'PENDING',
+               cleaning_status TEXT NOT NULL DEFAULT 'PENDING',
+               coshh_status TEXT NOT NULL DEFAULT 'PENDING',
+               output_dir TEXT,
+               error TEXT,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL
+            )"""
+        )
+        conn.execute(
+            "INSERT INTO materials(material_name,status,cleaning_status,coshh_status,"
+            "output_dir,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            ("Previously completed API", "READY_FOR_REVIEW", "READY_FOR_REVIEW",
+             "REVIEW_REQUIRED", "/existing/output/assessment-19", "2026-10-25", "2026-10-25"),
+        )
+    queue=MaterialQueue(db)
+    rows=queue.list_rows()
+    assert len(rows)==1
+    assert rows[0]["material_name"]=="Previously completed API"
+    assert rows[0]["status"]=="READY_FOR_REVIEW"
+    assert rows[0]["output_dir"]=="/existing/output/assessment-19"
+    assert rows[0]["starting_form"]=="UNSPECIFIED"
+    assert queue.add(MaterialInput(material_name="New tablet feedstock",
+                                   starting_form="TABLETS"))==2
