@@ -6,6 +6,7 @@ on:
     paths:
       - scripts/update_controlled_coshh_master.py
       - scripts/fix_coshh_responsible_pagination.py
+      - scripts/update_coshh_half_face_master.py
       - .github/workflows/commit-coshh-master.yml
 permissions:
   contents: write
@@ -23,12 +24,14 @@ jobs:
         run: pip install lxml
       - name: Remove Section 9 forced page break and set Responsible Person
         run: python scripts/fix_coshh_responsible_pagination.py
+      - name: Change Section 5 controls to half-face respirator
+        run: python scripts/update_coshh_half_face_master.py
       - name: Commit updated binary DOCX
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx"
           if ! git diff --cached --quiet; then
-            git commit -m "Correct COSHH Section 9 pagination and Responsible Person default"
+            git commit -m "Update COSHH Section 5 to half-face respirator and retag controls"
             git push origin HEAD:feature/coshh-assessment-suite
           fi
