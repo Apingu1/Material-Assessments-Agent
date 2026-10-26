@@ -517,7 +517,7 @@ def build_coshh_template_values(
         "DER_FIRE_CO2": fire_co2,
         "DER_FIRE_FOAM": fire_foam,
         "DER_FIRE_NA": not (fire_co2 or fire_foam),
-        "USR_MONITORING_RESPONSIBLE_PERSON": "",
+        "USR_MONITORING_RESPONSIBLE_PERSON": "Imran Patel",
         "EAS_STORAGE_SEGREGATION": research.storage_handling,
         "EAS_WASTE_DISPOSAL": research.disposal,
         "HUM_CONTROLS_ADEQUATE_YES": False,

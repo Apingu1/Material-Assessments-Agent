@@ -5,6 +5,7 @@ on:
       - feature/coshh-assessment-suite
     paths:
       - scripts/update_controlled_coshh_master.py
+      - scripts/fix_coshh_responsible_pagination.py
       - .github/workflows/commit-coshh-master.yml
 permissions:
   contents: write
@@ -20,14 +21,14 @@ jobs:
           python-version: '3.12'
       - name: Install XML library
         run: pip install lxml
-      - name: Apply exact uploaded Word template layout patch
-        run: python scripts/update_controlled_coshh_master.py
+      - name: Remove Section 9 forced page break and set Responsible Person
+        run: python scripts/fix_coshh_responsible_pagination.py
       - name: Commit updated binary DOCX
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add "templates/ES.SOP.089.F01.V01 - COSHH Assessment.docx"
           if ! git diff --cached --quiet; then
-            git commit -m "Update controlled ES.SOP.089.F01.V01 Word template: fire N/A and layout"
+            git commit -m "Correct COSHH Section 9 pagination and Responsible Person default"
             git push origin HEAD:feature/coshh-assessment-suite
           fi

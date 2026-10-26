@@ -138,6 +138,21 @@ An attempted download without updating returns a specific compatibility
 message naming missing/deprecated field tags. The original assessment and
 SDS are never overwritten as part of this refresh.
 
+### COSHH responsible person and Section 9 pagination
+
+The Section 7 responsible person is populated as **Imran Patel** for every
+generated or refreshed COSHH assessment. This is a site contact, **not** an
+electronic review/approval signature; approval roles and dates remain blank
+for human completion. The controlled Word master also displays this default.
+
+The controlled Word master no longer forces Section 9 onto a fresh page.
+Instead, Word flows Section 9 directly after Section 8 when space permits.
+This fixes the very large blank area seen on the Dihydrocodeine assessment
+(page 3 in the superseded four-page output), without adjusting the
+Section 8/9 table layout or the other 134 controlled field tags.
+Existing completed assessments can use **Refresh form (no AI)** to apply
+the change without new SDS or Cleaning Validation research.
+
 ### Document-only COSHH refresh reliability
 
 For existing completed COSHH records, `Refresh form (no AI)` now verifies
