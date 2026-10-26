@@ -26,7 +26,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v13-sds-bulk-export"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v14-starting-form-half-face-rpe"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -556,6 +556,7 @@ HTML = r'''<!doctype html>
 <div><label>Material / API Name</label><input id="material" maxlength="55" placeholder="Haloperidol 10 mg Tablets"><div class="count"><span id="mc">0</span>/55</div></div>
 <div><label>Dosage Form</label><input id="dosage" maxlength="55" placeholder="Suspension"></div>
 <div><label>Route</label><input id="route" maxlength="55" placeholder="Oral"></div>
+<div class="full" style="max-width:490px"><label for="starting-form">Material starting form (as received)</label><select id="starting-form" onchange="startingFormHint()"><option value="UNSPECIFIED">Select the starting form…</option><option value="TABLETS">Tablets (crushed to powder in Production)</option><option value="POWDER">Powder</option><option value="GRANULES">Granules</option><option value="LIQUID">Liquid / solution</option><option value="OTHER">Other</option></select><div class="muted" id="starting-form-hint" style="margin-top:5px">This is the incoming physical form, not the finished dosage form.</div></div>
 <div class="full"><label>Manufacturing Context</label><textarea id="context" placeholder="e.g. Tablets are crushed and used as starting material for suspension manufacture"></textarea></div>
 </div>
 <div class="subhead">COSHH - applicable areas</div>
@@ -618,7 +619,8 @@ HTML = r'''<!doctype html>
 const m=document.getElementById('material');m.addEventListener('input',()=>document.getElementById('mc').textContent=m.value.length);
 function note(t){document.getElementById('notice').textContent=t}
 function areas(){return [...document.querySelectorAll('#areas input:checked')].map(x=>x.value)}
-async function add(run){const body={material_name:m.value.trim(),dosage_forms:document.getElementById('dosage').value.trim(),routes:document.getElementById('route').value.trim(),product_context:document.getElementById('context').value.trim(),coshh_areas:areas(),people_exposed:document.getElementById('people').value.trim(),typical_quantity:document.getElementById('quantity').value.trim(),existing_controls:document.getElementById('controls').value.trim(),frequency:document.getElementById('frequency').value.trim(),duration:document.getElementById('duration').value.trim()};if(!body.material_name){note('Enter a material name.');return}if(!body.coshh_areas.length){note('Select at least one COSHH area.');return}const r=await fetch('/api/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok){note('Could not add material: '+await r.text());return}note('Material added to queue.');if(run)await runAll();await refresh()}
+function startingFormHint(){const form=document.getElementById('starting-form').value;document.getElementById('starting-form-hint').textContent=form==='TABLETS'?'Production crushes the tablets to powder: half-face RPE in Production and R&D; QC uses an extracted fume hood.':form==='POWDER'?'Powder respirator requirement depends on dust exposure and the SDS hazard assessment.':'This is the incoming physical form, not the finished dosage form.';}
+async function add(run){const body={material_name:m.value.trim(),dosage_forms:document.getElementById('dosage').value.trim(),starting_form:document.getElementById('starting-form').value,routes:document.getElementById('route').value.trim(),product_context:document.getElementById('context').value.trim(),coshh_areas:areas(),people_exposed:document.getElementById('people').value.trim(),typical_quantity:document.getElementById('quantity').value.trim(),existing_controls:document.getElementById('controls').value.trim(),frequency:document.getElementById('frequency').value.trim(),duration:document.getElementById('duration').value.trim()};if(!body.material_name){note('Enter a material name.');return}if(body.starting_form==='UNSPECIFIED'){note('Select the incoming material starting form. This is different from finished dosage form.');return}if(!body.coshh_areas.length){note('Select at least one COSHH area.');return}const r=await fetch('/api/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok){note('Could not add material: '+await r.text());return}note('Material added to queue.');if(run)await runAll();await refresh()}
 async function runAll(){
  try {
   const r=await fetch('/api/run',{method:'POST'});

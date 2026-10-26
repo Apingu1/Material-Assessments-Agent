@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import Settings
-from .models import COSHHArea, MaterialInput
+from .models import COSHHArea, MaterialInput, StartingForm
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
@@ -69,6 +69,7 @@ def _item(
     dosage_forms: str,
     routes: str,
     product_context: str,
+    starting_form: StartingForm,
     coshh_areas: str,
     people_exposed: str,
     typical_quantity: str,
@@ -79,6 +80,7 @@ def _item(
     return MaterialInput(
         material_name=material_name,
         dosage_forms=dosage_forms,
+        starting_form=starting_form,
         routes=routes,
         product_context=product_context,
         coshh_areas=_parse_areas(coshh_areas),
@@ -113,6 +115,7 @@ def add_material(
     material_name: str,
     dosage_forms: str = typer.Option("", "--dosage-form", "-d"),
     routes: str = typer.Option("", "--route", "-r"),
+    starting_form: StartingForm = typer.Option(StartingForm.UNSPECIFIED, "--starting-form"),
     product_context: str = typer.Option("", "--context", "-c"),
     coshh_areas: str = typer.Option("GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION", "--coshh-areas"),
     people_exposed: str = typer.Option("Production, QC, Sampling and Warehouse personnel as applicable", "--people-exposed"),
@@ -124,7 +127,7 @@ def add_material(
     """Add one material to the autonomous queue."""
     settings = _settings()
     queue = MaterialQueue(settings.database_path)
-    item = _item(material_name, dosage_forms, routes, product_context, coshh_areas, people_exposed, typical_quantity, existing_controls, frequency, duration)
+    item = _item(material_name, dosage_forms, routes, product_context, starting_form, coshh_areas, people_exposed, typical_quantity, existing_controls, frequency, duration)
     material_id = queue.add(item)
     console.print(f"Added queue item #{material_id}: {material_name}")
 
@@ -161,6 +164,7 @@ def assess(
     material_name: str,
     dosage_forms: str = typer.Option("", "--dosage-form", "-d"),
     routes: str = typer.Option("", "--route", "-r"),
+    starting_form: StartingForm = typer.Option(StartingForm.UNSPECIFIED, "--starting-form"),
     product_context: str = typer.Option("", "--context", "-c"),
     coshh_areas: str = typer.Option("GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION", "--coshh-areas"),
     people_exposed: str = typer.Option("Production, QC, Sampling and Warehouse personnel as applicable", "--people-exposed"),
@@ -172,7 +176,7 @@ def assess(
     """Run one material immediately without adding it to the queue."""
     settings = _settings(require_runtime=True)
     pipeline = AssessmentPipeline(settings)
-    item = _item(material_name, dosage_forms, routes, product_context, coshh_areas, people_exposed, typical_quantity, existing_controls, frequency, duration)
+    item = _item(material_name, dosage_forms, routes, product_context, starting_form, coshh_areas, people_exposed, typical_quantity, existing_controls, frequency, duration)
     with console.status(f"Researching {material_name}..."):
         bundle, output_dir = pipeline.run(item)
     console.print(f"[green]Complete:[/green] {output_dir}")
