@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
 import shutil
 import tempfile
 import threading
@@ -9,6 +10,12 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from starlette.background import BackgroundTask
+
+from .bulk_export import (
+    BulkExportRequest, CV_COMPLETED, COSHH_COMPLETED,
+    resolve_export, write_export_zip,
+)
 
 from .config import Settings, REPO_ROOT
 from .coshh_recovery import (
@@ -19,7 +26,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v9-template-revision-download"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v10-queue-filters-bulk-export"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -199,6 +206,12 @@ def queue_rows() -> list[dict]:
         payload["coshh_error"] = ""
         payload["coshh_stage"] = ""
         payload["sds_attempt_count"] = 0
+        payload["coshh_refresh_needed"] = False
+        payload["cv_dossier_available"] = False
+        payload["cv_form_available"] = False
+        payload["cv_pdf_available"] = False
+        payload["coshh_docx_available"] = False
+        payload["coshh_pdf_available"] = False
         payload["worker_active"] = _worker_lock.locked()
         payload["run_needs_status_check"] = (
             payload.get("status") == "RESEARCHING" and not _worker_lock.locked()
@@ -230,6 +243,19 @@ def queue_rows() -> list[dict]:
                     payload["coshh_template_verified"] = False
                     payload["coshh_refresh_needed"] = True
                     payload["coshh_template_reason"] = type(exc).__name__ + ": " + str(exc)
+        if row["output_dir"]:
+            folder = Path(row["output_dir"]).resolve()
+            if folder.is_relative_to(settings.output_dir.resolve()):
+                cv_done = payload.get("cleaning_status") in CV_COMPLETED
+                coshh_done = payload.get("coshh_status") in COSHH_COMPLETED
+                payload["cv_dossier_available"] = cv_done and len(list(folder.glob("*Assessment Dossier - DRAFT.docx"))) == 1
+                payload["cv_form_available"] = cv_done and len(list(folder.glob("*F01 V02 - DRAFT.docx"))) == 1
+                payload["cv_pdf_available"] = cv_done and len(list(folder.glob("*Assessment Dossier - DRAFT.pdf"))) == 1
+                payload["coshh_docx_available"] = coshh_done and payload["coshh_template_verified"]
+                payload["coshh_pdf_available"] = (
+                    payload["coshh_docx_available"]
+                    and len(list(folder.glob("*COSHH Assessment - DRAFT.pdf"))) == 1
+                )
         result.append(payload)
     return result
 
@@ -385,10 +411,40 @@ def coshh_diagnostics(material_id: int) -> dict:
     return result
 
 
+@app.post("/api/bulk-export/prepare")
+def prepare_bulk_export(selection: BulkExportRequest) -> dict:
+    """Preflight every chosen file without running research or touching files."""
+    settings = _settings()
+    files = resolve_export(selection, MaterialQueue(settings.database_path), settings)
+    return {
+        "files": [file.public() for file in files],
+        "file_count": len(files),
+        "total_bytes": sum(file.source.stat().st_size for file in files),
+    }
+
+
+@app.post("/api/bulk-export/zip")
+def download_bulk_export_zip(selection: BulkExportRequest):
+    """Portable ZIP fallback for browsers that cannot choose a local directory."""
+    settings = _settings()
+    files = resolve_export(selection, MaterialQueue(settings.database_path), settings)
+    archive = write_export_zip(files)
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
+    return FileResponse(
+        archive,
+        media_type="application/zip",
+        filename=f"CV_COSHH_Assessments_{suffix}.zip",
+        background=BackgroundTask(lambda: archive.unlink(missing_ok=True)),
+    )
+
+
 @app.get("/api/download/{material_id}/{kind}")
 def download(material_id: int, kind: str):
     patterns = {
         "form": "*F01 V02 - DRAFT.docx",
+        "cv_form": "*F01 V02 - DRAFT.docx",
+        "cv_dossier": "*Assessment Dossier - DRAFT.docx",
+        "cv_pdf": "*Assessment Dossier - DRAFT.pdf",
         "dossier": "*Assessment Dossier - DRAFT.docx",
         "pdf": "*Assessment Dossier - DRAFT.pdf",
         "summary": "REVIEW_SUMMARY.txt",
