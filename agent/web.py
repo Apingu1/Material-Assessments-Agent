@@ -501,6 +501,28 @@ HTML = r'''<!doctype html>
 <title>Material Assessment Agent</title>
 <style>
 :root{font-family:Arial,sans-serif;color:#17202a;background:#f3f6f8;--navy:#17365d;--teal:#2b8795;--line:#d9e2e8}*{box-sizing:border-box}body{margin:0}.wrap{max-width:1240px;margin:30px auto;padding:0 20px}.top{display:flex;align-items:end;justify-content:space-between;margin-bottom:18px}h1{font-size:27px;margin:0;color:var(--navy)}.muted{color:#667085;font-size:13px}.card{background:#fff;border:1px solid #e4e7ec;border-radius:14px;padding:20px;margin-bottom:18px;box-shadow:0 3px 12px rgba(16,24,40,.05)}.grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}.full{grid-column:1/-1}.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}label{display:block;font-size:12px;font-weight:700;margin-bottom:6px;color:#344054}input,textarea,select{width:100%;border:1px solid #d0d5dd;border-radius:8px;padding:10px 11px;font:inherit;background:#fff}textarea{height:72px;resize:vertical}.count{font-size:11px;color:#667085;text-align:right;margin-top:3px}.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}button,.filebtn{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;background:var(--navy);color:white}.secondary{background:#eef3f6;color:var(--navy)}.filebtn{display:inline-block}.filebtn input{display:none}.subhead{font-size:13px;font-weight:800;color:var(--navy);margin:18px 0 10px;border-top:1px solid #edf1f3;padding-top:14px}.areas{display:flex;gap:8px;flex-wrap:wrap}.area{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fafcfd;font-size:12px}.area input{width:auto;margin-right:5px}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #eaecf0;vertical-align:top}th{color:#667085;font-size:10.5px;text-transform:uppercase}.status{font-weight:800;color:var(--navy)}.links a{display:inline-block;margin:2px 8px 2px 0;color:#175cd3;text-decoration:none}.error{color:#b42318;max-width:260px}.notice{font-size:13px;margin-top:10px;color:#475467}.output-title{font-weight:800;color:#344054;margin-bottom:3px}.pill{display:inline-block;border-radius:99px;background:#eef3f6;padding:3px 7px;font-size:10px;font-weight:800;margin-bottom:4px}@media(max-width:800px){.grid,.two{grid-template-columns:1fr}.top{display:block}.top .muted{margin-top:6px}table{display:block;overflow:auto}}
+/* Queue filtering and controlled bulk-save dialog */
+.queue-toolbar{display:flex;align-items:end;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:16px 0 12px}
+.queue-filters{display:flex;flex-wrap:wrap;gap:10px;flex:1}
+.queue-filters>div{min-width:180px;flex:1}
+.queue-filters label{margin-bottom:4px}
+.queue-actions{display:flex;gap:8px;align-items:end}
+.queue-results{font-size:12px;color:#667085;margin-bottom:8px}
+.export-overlay[hidden]{display:none}
+.export-overlay{position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.54);display:flex;justify-content:center;align-items:center;padding:16px}
+.export-dialog{width:min(940px,100%);max-height:92vh;display:flex;flex-direction:column;background:white;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.28);overflow:hidden}
+.export-heading{display:flex;justify-content:space-between;align-items:center;padding:20px 22px;border-bottom:1px solid var(--line)}
+.export-content{padding:16px 22px;overflow:auto}
+.export-item{border:1px solid #e4e7ec;border-radius:10px;padding:12px;margin:9px 0;background:#fbfcfd}
+.export-item-title{font-weight:800;margin-bottom:10px;color:var(--navy)}
+.export-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px}
+.export-options label{font-size:12px;font-weight:500;display:flex;align-items:center;gap:7px;margin:0}
+.export-options input{width:auto}
+.export-actions{padding:16px 22px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.export-tip{background:#f0f6f8;border-radius:9px;padding:12px;font-size:12px;color:#344054;margin:0 0 12px}
+.export-status{color:#344054;font-size:12px;flex:1;min-width:160px}
+.export-btn[disabled]{opacity:.5;cursor:wait}
+@media(max-width:600px){.export-heading,.export-content,.export-actions{padding:12px}.queue-filters>div{min-width:100%}.export-dialog{max-height:96vh}}
 </style>
 </head>
 <body><div class="wrap">
@@ -528,7 +550,44 @@ HTML = r'''<!doctype html>
 <div class="two"><div><label>Frequency</label><input id="frequency" value="Infrequent"></div><div><label>Duration</label><input id="duration" value="<30 mins"></div></div>
 </div>
 <div class="actions"><button onclick="add(false)">Add to Queue</button><button onclick="add(true)">Add & Run</button><button class="secondary" onclick="runAll()">Run Pending</button><label class="filebtn secondary">Import CSV<input id="csv" type="file" accept=".csv" onchange="uploadCsv()"></label></div><div id="notice" class="notice"></div></div>
-<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><strong>Assessment Queue</strong><button class="secondary" onclick="refresh()">Refresh</button></div><div style="overflow:auto"><table><thead><tr><th>ID</th><th>Material</th><th>Cleaning Validation</th><th>COSHH</th><th>Issue</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+<div class="card">
+<div style="display:flex;justify-content:space-between;align-items:center"><strong>Assessment Queue</strong><button class="secondary" onclick="refresh()">Refresh</button></div>
+<div class="queue-toolbar">
+ <div class="queue-filters">
+  <div><label for="queue-search">Search material / ID</label><input id="queue-search" type="search" placeholder="Material name or assessment ID" oninput="renderQueue()"></div>
+  <div><label for="queue-filter">Filter assessments</label><select id="queue-filter" onchange="renderQueue()">
+   <option value="all">All assessments</option>
+   <option value="cv_completed">CV completed</option>
+   <option value="cv_review">CV pending review</option>
+   <option value="pde_required">PDE required</option>
+   <option value="pde_recommended">PDE recommended</option>
+   <option value="coshh_completed">COSHH completed / pending review</option>
+   <option value="coshh_refresh">COSHH requires form update</option>
+   <option value="coshh_failed">COSHH failed</option>
+   <option value="failed">Any failed assessment</option>
+   <option value="pending">Pending</option>
+   <option value="running">In progress</option>
+  </select></div>
+ </div>
+ <div class="queue-actions"><button onclick="openBulkExport()">Save All / Export</button></div>
+</div>
+<div class="queue-results" id="queue-results">Loading assessments…</div>
+<div style="overflow:auto"><table><thead><tr><th>ID</th><th>Material</th><th>Cleaning Validation</th><th>COSHH</th><th>Issue</th></tr></thead><tbody id="rows"></tbody></table></div></div>
+</div>
+<div id="export-modal" class="export-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="export-title">
+ <div class="export-dialog">
+  <div class="export-heading"><div><strong id="export-title" style="font-size:19px;color:var(--navy)">Save assessment documents</strong><div class="muted">Choose documents for each material in your current filtered list.</div></div><button class="secondary" onclick="closeBulkExport()" aria-label="Close export dialog">Close</button></div>
+  <div class="export-content">
+   <div class="export-tip">Save individual Word/PDF files into a folder you choose (supported desktop browsers), or download a ZIP containing separate folders for each material. <strong>No AI credits are used.</strong> Outdated COSHH forms must be refreshed before exporting.</div>
+   <div class="actions" style="margin:0 0 10px"><button class="secondary" onclick="selectExportKind('cv_dossier')">Select all CV dossiers</button><button class="secondary" onclick="selectExportKind('coshh')">Select all COSHH Word</button><button class="secondary" onclick="clearExportSelection()">Clear selection</button></div>
+   <div id="export-rows"></div>
+  </div>
+  <div class="export-actions">
+   <div class="export-status" id="export-status">Select at least one document.</div>
+   <button class="secondary export-btn" id="export-zip" onclick="downloadBulkZip()">Download ZIP</button>
+   <button class="export-btn" id="export-folder" onclick="saveBulkToFolder()">Choose folder &amp; save files</button>
+  </div>
+ </div>
 </div>
 <script>
 const m=document.getElementById('material');m.addEventListener('input',()=>document.getElementById('mc').textContent=m.value.length);
@@ -594,20 +653,171 @@ async function uploadSds(id, input){
  const x=await r.json();note(r.ok?'SDS PDF saved unchanged. Click Rebuild COSHH only to extract and populate the form.':(x.detail||'SDS upload rejected.'));
  await refresh();
 }
-async function refresh(){
-const body=document.getElementById('rows');
-try{
- const response=await fetch('/api/queue',{cache:'no-store'});
- if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}
- const data=await response.json();
- if(!Array.isArray(data))throw new Error('Unexpected queue response');
- body.innerHTML=data.map(x=>{
+let queueCache=[];
+function filteredAssessments(){
+ const search=document.getElementById('queue-search').value.trim().toLowerCase();
+ const filter=document.getElementById('queue-filter').value;
+ const cvDone=['READY_FOR_REVIEW','PDE_REQUIRED','PDE_RECOMMENDED','EVIDENCE_GAP'];
+ return queueCache.filter(x=>{
+  if(search && !String(x.material_name||'').toLowerCase().includes(search) && !String(x.id).includes(search))return false;
+  const cv=x.cleaning_status||x.status;
+  const cos=x.coshh_status||'PENDING';
+  switch(filter){
+   case 'cv_completed':return cvDone.includes(cv);
+   case 'cv_review':return ['READY_FOR_REVIEW','PDE_RECOMMENDED','EVIDENCE_GAP'].includes(cv);
+   case 'pde_required':return cv==='PDE_REQUIRED';
+   case 'pde_recommended':return cv==='PDE_RECOMMENDED';
+   case 'coshh_completed':return ['READY_FOR_REVIEW','REVIEW_REQUIRED'].includes(cos);
+   case 'coshh_refresh':return Boolean(x.coshh_refresh_needed);
+   case 'coshh_failed':return cos==='FAILED';
+   case 'failed':return cv==='FAILED'||cos==='FAILED'||x.status==='FAILED';
+   case 'pending':return x.status==='PENDING'||cos==='PENDING'&&cv==='PENDING';
+   case 'running':return x.status==='RESEARCHING'||cos==='RESEARCHING'||cv==='RESEARCHING';
+   default:return true;
+  }
+ });
+}
+function renderQueue(){
+ const data=filteredAssessments();
+ document.getElementById('queue-results').textContent=data.length+' of '+queueCache.length+' assessments displayed';
+ document.getElementById('rows').innerHTML=data.map(x=>{
    const warning=x.run_needs_status_check?'<div class="error">Previously marked RESEARCHING; no web worker currently detected. Check the saved record before starting another paid run.</div>':'';
    return `<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span>${warning}</td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`;
- }).join('')||'<tr><td colspan="5" class="muted">No assessments have been added to this queue database.</td></tr>';
-}catch(error){
- body.innerHTML='<tr><td colspan="5" class="error">Assessment queue could not be loaded ('+esc(String(error.message))+'). This does not mean prior records have been deleted. Review server diagnostics; do not submit another paid run solely to restore the list.</td></tr>';
+ }).join('')||'<tr><td colspan="5" class="muted">No assessments match this filter.</td></tr>';
 }
+async function refresh(){
+ const body=document.getElementById('rows');
+ try{
+  const response=await fetch('/api/queue',{cache:'no-store'});
+  if(!response.ok)throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200));
+  const data=await response.json();
+  if(!Array.isArray(data))throw new Error('Unexpected queue response');
+  queueCache=data;
+  renderQueue();
+ }catch(error){
+  body.innerHTML='<tr><td colspan="5" class="error">Assessment queue could not be loaded ('+esc(String(error.message))+'). This does not mean prior records have been deleted. Review server diagnostics; do not submit another paid run solely to restore the list.</td></tr>';
+  document.getElementById('queue-results').textContent='Queue could not be refreshed';
+ }
+}
+const exportChoices=[
+ ['cv_dossier','CV dossier (Word)','cv_dossier_available',true],
+ ['cv_form','CV screening form (Word)','cv_form_available',false],
+ ['cv_pdf','CV dossier (PDF)','cv_pdf_available',false],
+ ['coshh','COSHH form (Word)','coshh_docx_available',true],
+ ['coshh_pdf','COSHH form (PDF)','coshh_pdf_available',false]
+];
+function openBulkExport(){
+ const rows=filteredAssessments();
+ const container=document.getElementById('export-rows');
+ container.innerHTML=rows.map(row=>{
+  const options=exportChoices.map(([kind,label,key,defaultChecked])=>{
+   const available=Boolean(row[key]);
+   return `<label title="${available?'Available':'Not currently available'}"><input type="checkbox" class="export-check" data-id="${row.id}" data-kind="${kind}" ${available?'':'disabled'} ${available&&defaultChecked?'checked':''} onchange="updateExportCount()">${esc(label)}${available?'':' — unavailable'}</label>`;
+  }).join('');
+  const warning=row.coshh_refresh_needed?'<div class="error" style="margin:6px 0">COSHH uses an older form: update this assessment first (no AI).</div>':'';
+  const noDocs=!exportChoices.some(c=>row[c[2]]);
+  return `<div class="export-item"><div class="export-item-title">#${row.id} — ${esc(row.material_name)} ${noDocs?'<span class="muted">(no completed documents)</span>':''}</div>${warning}<div class="export-options">${options}</div></div>`;
+ }).join('')||'<div class="muted">No materials match your current filters. Clear the filter to export all available assessments.</div>';
+ const modal=document.getElementById('export-modal');modal.hidden=false;
+ const folder=document.getElementById('export-folder');
+ folder.style.display=typeof window.showDirectoryPicker==='function'?'':'none';
+ updateExportCount();
+}
+function closeBulkExport(){document.getElementById('export-modal').hidden=true}
+function selectExportKind(kind){
+ document.querySelectorAll('.export-check[data-kind="'+kind+'"]').forEach(x=>{if(!x.disabled)x.checked=true});
+ updateExportCount();
+}
+function clearExportSelection(){
+ document.querySelectorAll('.export-check').forEach(x=>x.checked=false);
+ updateExportCount();
+}
+function collectBulkSelection(){
+ const rows=new Map();
+ document.querySelectorAll('.export-check:checked:not(:disabled)').forEach(input=>{
+  const id=Number(input.dataset.id);
+  if(!rows.has(id))rows.set(id,[]);
+  rows.get(id).push(input.dataset.kind);
+ });
+ return {entries:[...rows.entries()].map(([material_id,kinds])=>({material_id,kinds}))};
+}
+function updateExportCount(){
+ const request=collectBulkSelection();
+ const count=request.entries.reduce((sum,item)=>sum+item.kinds.length,0);
+ document.getElementById('export-status').textContent=count
+  ?count+' file(s) for '+request.entries.length+' material(s)'
+  :'Select at least one available document.';
+ document.getElementById('export-zip').disabled=!count;
+ document.getElementById('export-folder').disabled=!count;
+}
+function setExportStatus(message){document.getElementById('export-status').textContent=message}
+async function bulkRequest(endpoint,request){
+ const response=await fetch(endpoint,{
+  method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)
+ });
+ if(!response.ok){
+  let message='HTTP '+response.status;
+  try{const json=await response.json();message=typeof json.detail==='string'?json.detail:JSON.stringify(json.detail)}catch(e){}
+  throw new Error(message);
+ }
+ return response;
+}
+async function saveBulkToFolder(){
+ if(typeof window.showDirectoryPicker!=='function'){
+  setExportStatus('Folder selection is unavailable in this browser; use Download ZIP instead.');return;
+ }
+ const request=collectBulkSelection();
+ if(!request.entries.length)return;
+ let directory;
+ try{
+  // Directory selection must be initiated directly by this button click.
+  directory=await window.showDirectoryPicker({mode:'readwrite'});
+ }catch(e){
+  if(e.name!=='AbortError')setExportStatus('Folder selection failed: '+e.message);
+  return;
+ }
+ try{
+  setExportStatus('Checking selected assessment files…');
+  const response=await bulkRequest('/api/bulk-export/prepare',request);
+  const plan=await response.json();
+  let completed=0;
+  for(const file of plan.files){
+   const parts=file.relative_path.split('/');
+   let target=directory;
+   for(const segment of parts.slice(0,-1)){
+    target=await target.getDirectoryHandle(segment,{create:true});
+   }
+   const source=await fetch(file.url,{cache:'no-store'});
+   if(!source.ok)throw new Error('Cannot download '+file.relative_path+' (HTTP '+source.status+')');
+   const blob=await source.blob();
+   const handle=await target.getFileHandle(parts[parts.length-1],{create:true});
+   const writer=await handle.createWritable();
+   try{await writer.write(blob)}finally{await writer.close()}
+   completed++;
+   setExportStatus('Saved '+completed+' / '+plan.file_count+' document(s)…');
+  }
+  setExportStatus('Saved '+completed+' document(s) into your chosen folder. No AI calls.');
+ }catch(error){
+  setExportStatus('Save failed: '+error.message+'. Any files already saved remain in the selected folder.');
+ }
+}
+async function downloadBulkZip(){
+ const request=collectBulkSelection();
+ if(!request.entries.length)return;
+ try{
+  setExportStatus('Preparing verified documents as a ZIP…');
+  const response=await bulkRequest('/api/bulk-export/zip',request);
+  const blob=await response.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='CV_COSHH_Assessments_'+new Date().toISOString().slice(0,10)+'.zip';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  setExportStatus('ZIP download started. Choose its location using your browser Save As/Downloads settings. No AI calls.');
+ }catch(error){
+  setExportStatus('ZIP export failed: '+error.message);
+ }
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]))}
 async function showBuild(){const e=document.getElementById('build-status');try{const r=await fetch('/api/version',{cache:'no-store'});if(!r.ok)throw Error('version endpoint unavailable');const v=await r.json();e.textContent='COSHH: '+v.coshh_template+' ('+v.coshh_template_fields+' fields) | Loaded engine: '+(v.loaded_engine_build||'legacy')+' | Repository: '+v.commit;}catch(e){document.getElementById('build-status').textContent='COSHH version could not be verified — restart the Codespaces web server after pulling the branch.';}}
