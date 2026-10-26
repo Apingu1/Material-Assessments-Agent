@@ -17,6 +17,7 @@ from zipfile import BadZipFile
 
 from .config import Settings
 from .coshh_document import build_coshh_docx, coshh_review_summary
+from .coshh_references import reserve_coshh_reference
 from .coshh_rules import build_coshh_assessment
 from .coshh_template import verify_generated_coshh_document
 from .dossier import convert_docx_to_pdf
@@ -159,6 +160,9 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
     if old_status.get("status") not in {"READY_FOR_REVIEW", "REVIEW_REQUIRED"}:
         raise ValueError("COSHH must have completed before a no-AI form refresh")
 
+    assessment_reference, completed_on = reserve_coshh_reference(
+        settings.database_path, output_dir
+    )
     staging = output_dir / (".coshh-refresh-" + uuid4().hex[:12])
     staging.mkdir()
     try:
@@ -166,6 +170,7 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
         build_coshh_docx(
             assessment, bundle.material_input, stored, staged_docx,
             template_path=settings.coshh_template_path,
+            reference=assessment_reference, completion_date=completed_on,
         )
         verification = verify_generated_coshh_document(
             staged_docx, settings.coshh_template_path
@@ -191,6 +196,9 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
             "stage": "CONTROLLED_FORM_REFRESHED_NO_AI",
             "document_refreshed_at": datetime.now(timezone.utc).isoformat(),
             "document_refresh_ai_calls": 0,
+            "assessment_reference": assessment_reference,
+            "assessment_version": "1",
+            "completion_date": completed_on.isoformat(),
         }
         old_status_path.write_text(
             json.dumps(status, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -241,11 +249,15 @@ def regenerate_coshh_only(settings: Settings, output_dir: Path) -> dict:
             "Original reference SDS requires review against the actual incoming "
             "material supplier, salt/formulation and current classification."
         )
+        assessment_reference, completed_on = reserve_coshh_reference(
+            settings.database_path, output_dir
+        )
         name = _slug(research.coshh_substance_name)
         output_docx = output_dir / f"{name} - COSHH Assessment - DRAFT.docx"
         build_coshh_docx(
             assessment, item, stored, output_docx,
             template_path=settings.coshh_template_path,
+            reference=assessment_reference, completion_date=completed_on,
         )
         verification = verify_generated_coshh_document(
             output_docx, settings.coshh_template_path
@@ -277,6 +289,9 @@ def regenerate_coshh_only(settings: Settings, output_dir: Path) -> dict:
             "sds_identity_match": stored.identity_match,
             "sds_attempt_count": len(stored.attempts),
             "sds_source_lane": "COSHH_ONLY_STORED_PDF",
+            "assessment_reference": assessment_reference,
+            "assessment_version": "1",
+            "completion_date": completed_on.isoformat(),
             "template": settings.coshh_template_path.name,
             "template_verified": True,
             **verification,

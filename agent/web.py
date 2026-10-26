@@ -19,7 +19,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v7-ghs-ppe-fidelity"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v8-revised-template-site-ppe-references"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import Settings
 from .coshh_document import build_coshh_docx, coshh_review_summary
+from .coshh_references import reserve_coshh_reference
 from .coshh_rules import build_coshh_assessment
 from .curation import (
     curate_hazard_sources,
@@ -582,6 +583,9 @@ class AssessmentPipeline:
             (material_dir / "coshh_assessment.json").write_text(
                 coshh_assessment.model_dump_json(indent=2), encoding="utf-8"
             )
+            assessment_reference, completed_on = reserve_coshh_reference(
+                self.settings.database_path, material_dir
+            )
             coshh_docx = material_dir / f"{_slug(bundle.coshh.coshh_substance_name)} - COSHH Assessment - DRAFT.docx"
             build_coshh_docx(
                 coshh_assessment,
@@ -589,6 +593,8 @@ class AssessmentPipeline:
                 stored_sds,
                 coshh_docx,
                 template_path=self.settings.coshh_template_path,
+                reference=assessment_reference,
+                completion_date=completed_on,
             )
             from .coshh_template import verify_generated_coshh_document
             coshh_verification = verify_generated_coshh_document(
@@ -608,6 +614,9 @@ class AssessmentPipeline:
                 "sds_source_lane": selected_lane,
                 "sds_attempt_count": len(stored_sds.attempts),
                 "sds_identity_match": stored_sds.identity_match,
+                "assessment_reference": assessment_reference,
+                "assessment_version": "1",
+                "completion_date": completed_on.isoformat(),
                 "run_id": run_id,
                 "template_verified": True,
                 "template_sha256": coshh_verification["template_sha256"],

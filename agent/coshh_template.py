@@ -443,8 +443,8 @@ def build_coshh_template_values(
     except ValueError:
         # February 29 to February 28 for a non-leap review year.
         next_review = completed.replace(year=completed.year + 5, day=28)
-    fire_co2 = bool(re.search(r"carbon dioxide|\\bco2\\b|co₂", research.firefighting_media, re.I))
-    fire_foam = bool(re.search(r"\\bfoam\\b", research.firefighting_media, re.I))
+    fire_co2 = bool(re.search(r"carbon dioxide|\bco2\b|co₂", research.firefighting_media, re.I))
+    fire_foam = bool(re.search(r"\bfoam\b", research.firefighting_media, re.I))
 
     values: dict[str, object] = {
         "USR_ASSESSMENT_REFERENCE": reference,
