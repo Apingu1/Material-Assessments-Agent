@@ -182,10 +182,22 @@ def verify_generated_coshh_document(output_path: Path, template_path: Path) -> d
         for required in ("word/styles.xml", "word/document.xml", "word/header1.xml"):
             if required not in output.namelist() or required not in source.namelist():
                 raise ValueError(f"COSHH output missing controlled package part {required}")
+        template_root = etree.fromstring(source.read("word/document.xml"))
         root = etree.fromstring(output.read("word/document.xml"))
-        tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
-        if len(tags) != 134 or "DER_FIRE_NA" not in tags or "USR_MATERIAL_CODE" in tags:
-            raise ValueError(f"Generated COSHH output is not the controlled form: {len(tags)} tags")
+        expected = template_root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS)
+        actual = root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS)
+        missing = sorted(set(expected) - set(actual))
+        obsolete = sorted(set(actual) - set(expected))
+        if len(actual) != len(expected) or missing or obsolete:
+            details = (
+                f"Saved COSHH document uses a different master template "
+                f"(found {len(actual)} tags, current master {len(expected)}). "
+                f"Missing current fields: {', '.join(missing) or 'none'}. "
+                f"Old/unexpected fields: {', '.join(obsolete) or 'none'}. "
+                "Use 'Update and download COSHH (no AI)' on the existing assessment; "
+                "do not start a new paid research run."
+            )
+            raise ValueError(details)
         if output.read("word/styles.xml") != source.read("word/styles.xml"):
             raise ValueError("Generated COSHH style part differs from the controlled template")
         if output.read("word/header1.xml") != source.read("word/header1.xml"):

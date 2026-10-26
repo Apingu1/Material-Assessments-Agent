@@ -86,3 +86,71 @@ def test_legacy_and_invalid_status_always_have_all_consumer_keys(tmp_path):
     assert web._coshh_payload(tmp_path)["stage"] == ""
     old.unlink()
     assert web._coshh_payload(tmp_path)["sds_status"] == "NOT_AVAILABLE"
+
+
+def test_old_master_has_same_tag_count_but_different_mapping(tmp_path):
+    """Regression for Dihydrocodeine /api/download: count 134 is insufficient."""
+    import zipfile
+    from lxml import etree
+    import pytest
+    from agent.coshh_template import verify_generated_coshh_document
+    template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    document = tmp_path / "Dihydrocodeine - COSHH Assessment - DRAFT.docx"
+    with zipfile.ZipFile(template) as source:
+        payload = {item.filename: source.read(item.filename) for item in source.infolist()}
+    root = etree.fromstring(payload["word/document.xml"])
+    ns = {"w":"http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    tags = root.xpath('.//w:sdt/w:sdtPr/w:tag[@w:val="DER_FIRE_NA"]',namespaces=ns)
+    assert len(tags)==1
+    tags[0].set("{"+ns["w"]+"}val","USR_MATERIAL_CODE")
+    payload["word/document.xml"] = etree.tostring(root,encoding="UTF-8",xml_declaration=True,standalone=True)
+    with zipfile.ZipFile(document,"w",zipfile.ZIP_DEFLATED) as destination:
+        for name,content in payload.items():destination.writestr(name,content)
+    with pytest.raises(ValueError,match="DER_FIRE_NA") as exc:
+        verify_generated_coshh_document(document,template)
+    assert "USR_MATERIAL_CODE" in str(exc.value)
+    valid,reason=web._coshh_docx_current(tmp_path,template)
+    assert valid is False
+    assert "Update and download COSHH" in reason
+
+
+def test_queue_marks_old_finished_form_needing_no_ai_refresh(tmp_path,monkeypatch):
+    import json
+    from agent.models import MaterialInput
+    from agent.queue import MaterialQueue
+    queue=MaterialQueue(tmp_path/"data"/"agent.db")
+    output=tmp_path/"outputs"/"old-material"/"run-1"
+    output.mkdir(parents=True)
+    # Complete historic research was retained, but the master Word file is
+    # missing or from the prior 134-field mapping.
+    (output/"COSHH_STATUS.json").write_text(json.dumps({
+        "status":"REVIEW_REQUIRED","template_verified":True,
+        "sds_status":"STORED_UNCHANGED"
+    }))
+    material=queue.add(MaterialInput(material_name="Dihydrocodeine"))
+    queue.update(material,"READY_FOR_REVIEW",str(output),
+                 cleaning_status="READY_FOR_REVIEW",coshh_status="REVIEW_REQUIRED")
+    master=Path(__file__).resolve().parents[1]/"templates"/"ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    monkeypatch.setattr(web,"_settings",lambda:SimpleNamespace(database_path=queue.db_path,coshh_template_path=master))
+    rows=web.queue_rows()
+    assert len(rows)==1
+    assert rows[0]["coshh_template_verified"] is False
+    assert rows[0]["coshh_refresh_needed"] is True
+    assert "Word file" in rows[0]["coshh_template_reason"]
+
+
+def test_download_reports_actionable_mismatch_instead_of_generic_134(tmp_path,monkeypatch):
+    from fastapi import HTTPException
+    import json,pytest
+    document=tmp_path/"Dihydrocodeine - COSHH Assessment - DRAFT.docx"
+    document.write_bytes(b"older docx placeholder")
+    (tmp_path/"COSHH_STATUS.json").write_text(json.dumps({
+        "status":"REVIEW_REQUIRED","template_verified":True
+    }))
+    master=Path(__file__).resolve().parents[1]/"templates"/"ES.SOP.089.F01.V01 - COSHH Assessment.docx"
+    monkeypatch.setattr(web,"_output_dir",lambda _:tmp_path)
+    monkeypatch.setattr(web,"_settings",lambda:SimpleNamespace(coshh_template_path=master))
+    with pytest.raises(HTTPException) as exc:
+        web.download(18,"coshh")
+    assert exc.value.status_code==409
+    assert "earlier master" in exc.value.detail

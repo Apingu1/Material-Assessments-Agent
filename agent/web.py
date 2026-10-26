@@ -19,7 +19,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v8-revised-template-site-ppe-references"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v9-template-revision-download"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -88,6 +88,25 @@ def _coshh_payload(output_dir: Path) -> dict:
 
 def _coshh_status(output_dir: Path) -> str:
     return _coshh_payload(output_dir)["status"]
+
+
+def _coshh_docx_current(output_dir: Path, template_path: Path) -> tuple[bool, str]:
+    """Verify actual saved DOCX, not the stale 'verified' status JSON flag.
+
+    Same-sized tag sets can represent different master versions: the current
+    controlled form replaces USR_MATERIAL_CODE with DER_FIRE_NA (134 total).
+    No external service or OpenAI calls are made by this check.
+    """
+    from .coshh_template import verify_generated_coshh_document
+
+    matches = list(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
+    if len(matches) != 1:
+        return False, "The assessment has no unique generated COSHH Word file."
+    try:
+        verify_generated_coshh_document(matches[0], template_path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return False, str(exc)
+    return True, ""
 
 
 def _process_pending() -> None:
@@ -192,6 +211,21 @@ def queue_rows() -> list[dict]:
             payload["sds_attempt_count"] = coshh.get("sds_attempt_count", 0)
             if not payload.get("coshh_status"):
                 payload["coshh_status"] = coshh.get("status", "FAILED")
+            is_completed = payload["coshh_status"] in {"READY_FOR_REVIEW", "REVIEW_REQUIRED"}
+            payload["coshh_refresh_needed"] = False
+            payload["coshh_template_reason"] = ""
+            if is_completed:
+                try:
+                    current, why = _coshh_docx_current(
+                        Path(row["output_dir"]).resolve(), settings.coshh_template_path
+                    )
+                    payload["coshh_template_verified"] = current
+                    payload["coshh_refresh_needed"] = not current
+                    payload["coshh_template_reason"] = why
+                except (OSError, ValueError, KeyError) as exc:
+                    payload["coshh_template_verified"] = False
+                    payload["coshh_refresh_needed"] = True
+                    payload["coshh_template_reason"] = type(exc).__name__ + ": " + str(exc)
         result.append(payload)
     return result
 
@@ -374,18 +408,17 @@ def download(material_id: int, kind: str):
                 "COSHH generation failed or has not completed; no verified document "
                 "is available. " + (status.get("error") or "")
             ) if status.get("status") == "FAILED" else (
-                "This COSHH document is unverified. Rebuild COSHH only to use "
-                "ES.SOP.089.F01.V01."
+                "This COSHH is not yet verified. If it was generated before the "
+                "latest master revision, select 'Update and download COSHH (no AI)' "
+                "on the existing assessment. No new paid research is required."
             )
             raise HTTPException(status_code=409, detail=detail)
-        from .coshh_template import verify_generated_coshh_document
-        docx_files = list(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
-        if len(docx_files) != 1:
-            raise HTTPException(status_code=409, detail="Ambiguous or missing controlled COSHH document.")
-        try:
-            verify_generated_coshh_document(docx_files[0], _settings().coshh_template_path)
-        except (OSError, ValueError, KeyError) as exc:
-            raise HTTPException(status_code=409, detail=f"Controlled COSHH form verification failed: {exc}") from exc
+        current, reason = _coshh_docx_current(output_dir, _settings().coshh_template_path)
+        if not current:
+            raise HTTPException(
+                status_code=409,
+                detail="COSHH form was generated against an earlier master: " + reason,
+            )
     path = _match_output(material_id, pattern)
     return FileResponse(path, filename=path.name)
 
@@ -456,7 +489,11 @@ function cleaning(row){if(!row.output_dir)return `<span class="pill">${esc(row.c
 function coshh(row){
 if(!row.output_dir)return `<span class="pill">${esc(row.coshh_status||'PENDING')}</span>`;
 const b=`/api/download/${row.id}/`;const verified=row.coshh_template_verified;
+const completed=['REVIEW_REQUIRED','READY_FOR_REVIEW'].includes(row.coshh_status);
 let links=verified?`<a href="${b}coshh">Controlled COSHH V01</a><a href="${b}coshh_pdf">PDF</a><a href="${b}coshh_summary">Summary</a><button class="secondary" style="padding:5px 8px;font-size:11px" onclick="refreshCoshhForm(${row.id})">Refresh form (no AI)</button>`:'';
+if(completed && row.coshh_refresh_needed){
+ links+=`<div class="error">This assessment uses an earlier COSHH Word layout. Its saved research and SDS are retained.</div><button class="secondary" style="padding:5px 8px;font-size:11px" onclick="refreshCoshhForm(${row.id},true)">Update and download COSHH (no AI)</button>`;
+}
 if(!verified && row.coshh_status==='FAILED'){
  links+=`<div class="error">COSHH not generated: ${esc(row.coshh_error||'Review diagnostics')}</div>`;
 }
@@ -464,21 +501,25 @@ links+=`<a href="/api/coshh/${row.id}/diagnostics" target="_blank">Error / SDS d
 if(row.sds_status==='STORED_UNCHANGED'){
 links+=`<a href="/api/view/${row.id}/sds" target="_blank">View SDS</a><a href="${b}sds">Download SDS</a>`;
 }
-if(!verified && row.coshh_status!=='RESEARCHING'){
+if(!verified && !row.coshh_refresh_needed && !completed && row.coshh_status!=='RESEARCHING'){
 links+=`<button class="secondary" style="padding:5px 8px;font-size:11px" onclick="retryCoshh(${row.id})">Rebuild COSHH only</button>`;
 }
 links+=`<label class="filebtn secondary" style="padding:5px 8px;font-size:11px">Attach SDS PDF<input type="file" accept=".pdf,application/pdf" onchange="uploadSds(${row.id},this)"></label>`;
 return `<div class="status">${esc(row.coshh_status||'')}</div><div class="muted">SDS: ${esc(row.sds_status||'NOT_AVAILABLE')}</div><span class="links">${links}</span>`;
 }
-async function refreshCoshhForm(id){
- if(!confirm('Refresh COSHH from previously saved hazard data and SDS? The existing Word/PDF will be replaced, but Cleaning Validation and SDS research will NOT rerun. AI calls: 0.'))return;
+async function refreshCoshhForm(id,download=false){
+ if(!confirm('Generate the current controlled COSHH form from saved assessment data and the original SDS? Word/PDF will be replaced. Cleaning Validation and SDS extraction will NOT rerun. AI calls: 0.'))return;
  try{
   const response=await fetch('/api/coshh/'+id+'/refresh-form',{method:'POST'});
   const result=await response.json();
   if(!response.ok)throw Error(result.detail||'COSHH form refresh failed');
-  note('COSHH form refreshed with corrected hazard pictograms and full-size PPE checkboxes. AI calls: 0. Please download the new Word/PDF.');
- }catch(error){note('Unable to refresh COSHH: '+error.message);}
- await refresh();
+  note('Controlled COSHH form updated successfully with zero API calls.');
+  await refresh();
+  if(download)window.location.href='/api/download/'+id+'/coshh';
+ }catch(error){
+  note('Unable to update COSHH without AI: '+error.message);
+  await refresh();
+ }
 }
 async function retryCoshh(id){
  if(!confirm('Rebuild COSHH from saved Cleaning Validation research and an SDS PDF? No Cleaning Validation re-run. If an SDS exists, one COSHH PDF-extraction AI call may be billed.'))return;

@@ -124,6 +124,20 @@ have keep-with-next pagination so all four remain together as text expands.
 No additional model calls are required to reformat a completed assessment
 via **Refresh form (no AI)**.
 
+### Saved-document compatibility after master template revisions
+
+Earlier successful Dihydrocodeine/COSHH drafts use the previous 134-field
+mapping (Material Code instead of Fire Extinguisher N/A). The current master
+also has 134 fields, so total checkbox count is **not** sufficient to validate
+a saved document. The app now checks the actual controlled tag names, header
+and styles against the current master when reading the queue. A completed
+assessment built against an older layout is flagged **Update and download
+COSHH (no AI)**. This updates the existing DOCX/PDF from saved COSHH research,
+rather than starting a new assessment or asking OpenAI to find the SDS again.
+An attempted download without updating returns a specific compatibility
+message naming missing/deprecated field tags. The original assessment and
+SDS are never overwritten as part of this refresh.
+
 ### No-credit refresh of an existing COSHH document
 
 After code updates, a completed assessment's saved `coshh_assessment.json`
