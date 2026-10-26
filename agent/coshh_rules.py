@@ -8,6 +8,7 @@ from .models import (
     COSHHAssessment,
     COSHHResearch,
     MaterialInput,
+    StartingForm,
     RiskBand,
 )
 
@@ -94,7 +95,17 @@ def _hazard_severity(research: COSHHResearch) -> int:
     return 1
 
 
+def _starting_tablets(item: MaterialInput) -> bool:
+    """Separate received tablets from an unrelated finished-tablet dosage."""
+    if item.starting_form != StartingForm.UNSPECIFIED:
+        return item.starting_form == StartingForm.TABLETS
+    # Legacy assessments without an explicit form may state it in the name.
+    return re.search(r"\btablets?\b\s*$", item.material_name, re.I) is not None
+
+
 def _powder_like(item: MaterialInput, research: COSHHResearch) -> bool:
+    if _starting_tablets(item) or item.starting_form == StartingForm.POWDER:
+        return True
     raw = " ".join(
         [research.physical_form, research.material_use_context, item.product_context]
     ).lower()
@@ -167,6 +178,7 @@ def _ppe_and_controls(
     severity: int,
     powder: bool,
     volatile: bool,
+    tablet_crushing: bool,
 ) -> tuple[list[str], list[str], bool]:
     contained = profile == "CONTAINED"
     open_task = profile in {"OPEN_HANDLING", "CLEANING", "SPILL"}
@@ -202,14 +214,23 @@ def _ppe_and_controls(
     if open_task and (research.eye_hazard or powder or profile == "SPILL"):
         ppe.append("Safety glasses / goggles")
 
-    # Eaststone local respiratory-control rule:
-    # - QC uses the contained/extracted fume hood and does not use respirator masks.
-    # - Production/R&D use a full-face respirator where RPE is required.
-    # - A surgical mask is never treated as control of hazardous dust/vapour.
-    if airborne and area in {COSHHArea.PRODUCTION, COSHHArea.R_AND_D}:
-        filter_type = "powder filter" if powder and not volatile else "vapour filter" if volatile and not powder else "powder and/or vapour filter"
-        ppe.append(f"Full-face respirator with appropriate {filter_type}")
-    elif airborne and area != COSHHArea.QC:
+    # Site policy: tablet crushing requires half-face RPE in Production,
+    # and R&D matches the Production respiratory protection requirement.
+    # Otherwise select RPE for airborne powders/vapours when the SDS
+    # classification indicates meaningful harm (medium/high severity) or
+    # explicitly identifies an inhalation hazard. Surgical masks are not RPE.
+    needs_rpe = airborne and (
+        tablet_crushing or severity >= 2 or research.inhalation_hazard
+    )
+    if needs_rpe and area in {COSHHArea.PRODUCTION, COSHHArea.R_AND_D}:
+        filter_type = (
+            "suitable particle filter" if powder and not volatile
+            else "suitable vapour filter" if volatile and not powder
+            else "suitable particle/vapour filters"
+        )
+        ppe.append(f"Half-face respirator with {filter_type}")
+        review = True  # Confirm filter selection, face fit and containment.
+    elif airborne and area not in {COSHHArea.PRODUCTION, COSHHArea.R_AND_D, COSHHArea.QC}:
         ppe.append("Task-specific RPE if residual airborne exposure remains")
         review = True
 
@@ -243,6 +264,7 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
     """Combine SDS-driven intrinsic hazard data with controlled Eaststone activity logic."""
     severity = _hazard_severity(research)
     powder = _powder_like(item, research)
+    tablet_crushing = _starting_tablets(item)
     volatile = _volatile_like(research)
     site_engineered = _has_engineering_controls(item)
     activities: list[COSHHActivityAssessment] = []
@@ -267,8 +289,17 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
     if COSHHArea.OFFICE in item.coshh_areas:
         flags.append("Office was selected; confirm that a genuine occupational exposure scenario exists in the office area.")
 
+    if tablet_crushing:
+        flags.append(
+            "Incoming tablets are crushed to powder in Production. Confirm "
+            "half-face RPE filter selection, face-fit testing and dust containment."
+        )
+
     for area in item.coshh_areas:
-        for activity, profile in AREA_TASKS[area]:
+        tasks = list(AREA_TASKS[area])
+        if tablet_crushing and area == COSHHArea.PRODUCTION:
+            tasks.insert(1, ("Crush tablets into powder", "OPEN_HANDLING"))
+        for activity, profile in tasks:
             exposure = _exposure_score(profile, powder=powder, volatile=volatile)
             initial = _risk_band(severity, exposure)
             contained = profile == "CONTAINED"
@@ -280,7 +311,10 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
                 severity=severity,
                 powder=powder,
                 volatile=volatile,
+                tablet_crushing=tablet_crushing,
             )
+            if activity == "Crush tablets into powder":
+                controls.insert(0, "Minimise dust release while crushing; verify suitable local containment or extraction")
             engineered = site_engineered or (
                 area == COSHHArea.QC
                 and profile in {"OPEN_HANDLING", "CLEANING", "SPILL"}
@@ -298,7 +332,11 @@ def build_coshh_assessment(item: MaterialInput, research: COSHHResearch) -> COSH
                 COSHHActivityAssessment(
                     area=area,
                     activity=activity,
-                    exposure_scenario=_scenario(profile, powder=powder, volatile=volatile),
+                    exposure_scenario=(
+                        "Tablet crushing to powder; airborne dust and contact exposure"
+                        if activity == "Crush tablets into powder"
+                        else _scenario(profile, powder=powder, volatile=volatile)
+                    ),
                     controls=controls,
                     ppe=ppe,
                     initial_risk=initial,
