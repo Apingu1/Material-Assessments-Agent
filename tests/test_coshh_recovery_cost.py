@@ -119,7 +119,16 @@ def test_completed_coshh_can_refresh_hazards_and_ppe_at_zero_ai_cost(tmp_path, m
     (sds_dir / "Levomepromazine maleate - Safety Data Sheet.pdf").write_bytes(data)
     import hashlib
     (sds_dir / "SDS_METADATA.json").write_text(json.dumps({"sha256":hashlib.sha256(data).hexdigest()}))
-    monkeypatch.setattr(coshh_recovery, "load_existing_bundle", lambda _: SimpleNamespace(material_input=item, identity=None))
+    monkeypatch.setattr(
+        coshh_recovery, "load_existing_bundle",
+        lambda _: SimpleNamespace(
+            material_input=item,
+            identity=SimpleNamespace(
+                chemical_identity="Levomepromazine maleate",
+                active_moiety="Levomepromazine",
+            ),
+        ),
+    )
     monkeypatch.setattr(coshh_recovery,"ResearchAgent",
         lambda *args,**kwargs: (_ for _ in ()).throw(AssertionError("No API permitted")))
     template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
