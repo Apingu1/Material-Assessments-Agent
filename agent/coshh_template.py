@@ -26,7 +26,7 @@ _PPE_SUFFIXES = (
     "OVERSHOES",
     "NITRILE_GLOVES",
     "SURGICAL_MASK",
-    "FULL_FACE_RESPIRATOR",
+    "HALF_FACE_RESPIRATOR",
     "FUME_HOOD",
 )
 _HUMAN_TEXT_TAGS = (
@@ -164,8 +164,8 @@ def validate_coshh_template(template_path: Path) -> None:
     tags = set(root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=NS))
     required = {"RES_SUBSTANCE_PRODUCT", "SDS_HAZARD_STATEMENTS",
                 "DER_FIRE_NA", "DER_PPE_QC_FUME_HOOD",
-                "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR", "HUM_APPROVED_SIGNATURE"}
-    forbidden = {"USR_MATERIAL_CODE"}
+                "DER_PPE_PRODUCTION_HALF_FACE_RESPIRATOR", "HUM_APPROVED_SIGNATURE"}
+    forbidden = {"USR_MATERIAL_CODE", "DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"}
     if len(tags) != 134 or not required.issubset(tags) or tags.intersection(forbidden):
         raise ValueError(
             f"Wrong COSHH template: expected 134 ES.SOP.089.F01.V01 tagged controls, "
@@ -284,11 +284,11 @@ def _ppe_flags(activities, *, qc: bool = False) -> dict[str, bool]:
         "OVERSHOES": bool(re.search(r"overshoe|shoe cover", raw)),
         "NITRILE_GLOVES": bool(re.search(r"nitrile glove", raw)),
         "SURGICAL_MASK": bool(re.search(r"surgical (face )?mask", raw)),
-        "FULL_FACE_RESPIRATOR": bool(re.search(r"full[- ]face respirator", raw)),
+        "HALF_FACE_RESPIRATOR": bool(re.search(r"(?:half|full)[- ]face respirator", raw)),
         "FUME_HOOD": bool(re.search(r"fume hood|fume cupboard", raw)),
     }
     if qc:
-        flags["FULL_FACE_RESPIRATOR"] = False
+        flags["HALF_FACE_RESPIRATOR"] = False
     return flags
 
 
@@ -323,25 +323,25 @@ def _matrix_values(assessment: COSHHAssessment) -> dict[str, bool]:
             flags["NITRILE_GLOVES"] = True
         if prefix == "PRODUCTION":
             flags["OVERSHOES"] = True
-            flags["SURGICAL_MASK"] = not flags["FULL_FACE_RESPIRATOR"]
+            flags["SURGICAL_MASK"] = not flags["HALF_FACE_RESPIRATOR"]
         if prefix == "OFFICE_WAREHOUSE":
             # Sealed goods-in handling does not mandate nitrile gloves/goggles.
             flags["NITRILE_GLOVES"] = False
             flags["GLASSES_GOGGLES"] = False
         if prefix == "QC":
             # QC uses enclosed externally extracted fume hoods, not RPE.
-            flags["FULL_FACE_RESPIRATOR"] = False
+            flags["HALF_FACE_RESPIRATOR"] = False
             flags["SURGICAL_MASK"] = False
         for suffix in _PPE_SUFFIXES:
             result[f"DER_PPE_{prefix}_{suffix}"] = flags[suffix]
 
-    if result["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"]:
+    if result["DER_PPE_PRODUCTION_HALF_FACE_RESPIRATOR"]:
         result["DER_PPE_PRODUCTION_SURGICAL_MASK"] = False
-        result["DER_PPE_RND_FULL_FACE_RESPIRATOR"] = True
+        result["DER_PPE_RND_HALF_FACE_RESPIRATOR"] = True
         result["DER_PPE_RND_SURGICAL_MASK"] = False
         result["DER_PPE_QC_FUME_HOOD"] = True
 
-    if result["DER_PPE_RND_FULL_FACE_RESPIRATOR"]:
+    if result["DER_PPE_RND_HALF_FACE_RESPIRATOR"]:
         result["DER_PPE_RND_SURGICAL_MASK"] = False
 
     return result
@@ -366,7 +366,7 @@ def _activity_rows(assessment: COSHHAssessment) -> list[tuple[str, str, str, str
         "OVERSHOES": "overshoes",
         "NITRILE_GLOVES": "nitrile gloves",
         "SURGICAL_MASK": "surgical mask",
-        "FULL_FACE_RESPIRATOR": "full-face respirator",
+        "HALF_FACE_RESPIRATOR": "half-face respirator",
         "FUME_HOOD": "extracted fume hood",
     }
     for label, areas in grouping:
@@ -486,7 +486,15 @@ def build_coshh_template_values(
         "DER_ASSESSMENT_DATE": completed.strftime("%d%b%y").upper(),
         "HUM_NEXT_REVIEW_DATE": next_review.strftime("%d%b%y").upper(),
         "RES_CAS_NUMBER": research.sds.cas_number or "",
-        "USR_PROCESS_INTENDED_USE": item.product_context or research.material_use_context,
+        "USR_PROCESS_INTENDED_USE": (
+            (item.product_context or research.material_use_context or "")
+            + (
+                "; Production crushes incoming tablets into powder before compounding"
+                if item.starting_form.value == "TABLETS"
+                and "crush" not in (item.product_context or research.material_use_context or "").lower()
+                else ""
+            )
+        ).strip(" ;"),
         "USR_EXPOSED_WAREHOUSE": COSHHArea.GOODS_IN_WAREHOUSE in areas or _people_mentions(item, r"\bwarehouse\b|goods[ -]?in"),
         "USR_EXPOSED_OFFICE": COSHHArea.OFFICE in areas or _people_mentions(item, r"\boffice\b"),
         "USR_EXPOSED_PRODUCTION": COSHHArea.PRODUCTION in areas or _people_mentions(item, r"\bproduction\b|manufactur"),
