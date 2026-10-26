@@ -104,8 +104,10 @@ def _coshh_docx_current(output_dir: Path, template_path: Path) -> tuple[bool, st
         return False, "The assessment has no unique generated COSHH Word file."
     try:
         verify_generated_coshh_document(matches[0], template_path)
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        return False, str(exc)
+    except Exception as exc:
+        # BadZipFile and invalid historical documents should not crash the
+        # entire queue; return a diagnostic to display with the refresh action.
+        return False, f"{type(exc).__name__}: {exc}"
     return True, ""
 
 
@@ -217,11 +219,13 @@ def queue_rows() -> list[dict]:
             if is_completed:
                 try:
                     current, why = _coshh_docx_current(
-                        Path(row["output_dir"]).resolve(), settings.coshh_template_path
+                        Path(row["output_dir"]).resolve(),
+                        getattr(settings, "coshh_template_path", None)
                     )
-                    payload["coshh_template_verified"] = current
-                    payload["coshh_refresh_needed"] = not current
-                    payload["coshh_template_reason"] = why
+                    if getattr(settings, "coshh_template_path", None) is not None:
+                        payload["coshh_template_verified"] = current
+                        payload["coshh_refresh_needed"] = not current
+                        payload["coshh_template_reason"] = why
                 except (OSError, ValueError, KeyError) as exc:
                     payload["coshh_template_verified"] = False
                     payload["coshh_refresh_needed"] = True
@@ -408,7 +412,7 @@ def download(material_id: int, kind: str):
                 "COSHH generation failed or has not completed; no verified document "
                 "is available. " + (status.get("error") or "")
             ) if status.get("status") == "FAILED" else (
-                "This COSHH is not yet verified. If it was generated before the "
+                "This COSHH is unverified against the current master. If it was generated before the "
                 "latest master revision, select 'Update and download COSHH (no AI)' "
                 "on the existing assessment. No new paid research is required."
             )
