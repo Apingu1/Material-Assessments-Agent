@@ -207,3 +207,107 @@ def test_bulk_export_honours_coshh_verification_flag(tmp_path, monkeypatch):
         BulkExportRequest(entries=[{"material_id": id, "kinds": ["cv_dossier"]}]),
         queue, settings,
     )) == 1
+
+
+
+def _add_original_sds(folder):
+    """Store a real original PDF plus integrity/provenance metadata."""
+    import hashlib
+    import json
+    import fitz
+    doc = fitz.open()
+    doc.new_page().insert_text((48, 55), "Safety Data Sheet - Dihydrocodeine")
+    payload = doc.tobytes()
+    doc.close()
+    sdspath = folder / "sds"
+    sdspath.mkdir(exist_ok=True)
+    original = sdspath / "Dihydrocodeine - Safety Data Sheet.pdf"
+    original.write_bytes(payload)
+    (sdspath / "SDS_METADATA.json").write_text(json.dumps({
+        "status": "STORED_UNCHANGED",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }), encoding="utf-8")
+    return original
+
+
+def test_save_all_includes_original_sds_with_word_assessments(tmp_path, monkeypatch):
+    queue, settings, material_id, folder, dossier, coshh = _fixture(tmp_path, monkeypatch)
+    sds = _add_original_sds(folder)
+    assert web.queue_rows()[0]["sds_available"] is True
+    selection = {
+        "entries": [{
+            "material_id": material_id, "kinds": ["cv_dossier", "coshh", "sds"]
+        }]
+    }
+    client = TestClient(web.app)
+    response = client.post("/api/bulk-export/prepare", json=selection)
+    assert response.status_code == 200, response.text
+    plan = response.json()["files"]
+    assert [x["kind"] for x in plan] == ["cv_dossier", "coshh", "sds"]
+    assert plan[2]["relative_path"].endswith(sds.name)
+    assert plan[2]["url"] == f"/api/download/{material_id}/sds"
+    direct = client.get(plan[2]["url"])
+    assert direct.status_code == 200
+    assert direct.content == sds.read_bytes()
+    response = client.post("/api/bulk-export/zip", json=selection)
+    assert response.status_code == 200
+    with ZipFile(io.BytesIO(response.content)) as zipped:
+        assert len(zipped.namelist()) == 3
+        assert zipped.read(plan[2]["relative_path"]) == sds.read_bytes()
+
+
+def test_original_sds_can_export_even_if_coshh_form_failed(tmp_path, monkeypatch):
+    queue, settings, material_id, folder, dossier, coshh = _fixture(tmp_path, monkeypatch)
+    sds = _add_original_sds(folder)
+    queue.update(material_id, "PDE_REQUIRED", str(folder),
+                 cleaning_status="PDE_REQUIRED", coshh_status="FAILED")
+    (folder / "COSHH_STATUS.json").write_text(__import__("json").dumps({
+        "status": "FAILED", "sds_status": "STORED_UNCHANGED",
+        "template_verified": False,
+    }))
+    assert web.queue_rows()[0]["sds_available"] is True
+    files = resolve_export(
+        BulkExportRequest(entries=[{"material_id": material_id, "kinds": ["sds"]}]),
+        queue, settings
+    )
+    assert len(files) == 1 and files[0].source == sds
+    with pytest.raises(HTTPException, match="COSHH is not completed"):
+        resolve_export(
+            BulkExportRequest(entries=[{"material_id": material_id, "kinds": ["coshh"]}]),
+            queue, settings
+        )
+
+
+def test_bulk_sds_export_rejects_modified_or_unverified_pdf(tmp_path, monkeypatch):
+    import json
+    queue, settings, material_id, folder, dossier, coshh = _fixture(tmp_path, monkeypatch)
+    sds = _add_original_sds(folder)
+    selection = BulkExportRequest(entries=[
+        {"material_id": material_id, "kinds": ["sds"]}
+    ])
+    sds.write_bytes(sds.read_bytes() + b"tampered")
+    with pytest.raises(HTTPException, match="SHA-256"):
+        resolve_export(selection, queue, settings)
+    sds.write_bytes(b"%PDF-not-a-real-sds")
+    with pytest.raises(HTTPException, match="SHA-256"):
+        resolve_export(selection, queue, settings)
+    (folder / "sds" / "SDS_METADATA.json").write_text(json.dumps({
+        "status": "NOT_AVAILABLE", "sha256": "0"*64,
+    }))
+    with pytest.raises(HTTPException, match="no confirmed stored-original checksum"):
+        resolve_export(selection, queue, settings)
+
+
+def test_bulk_export_rejects_generated_pdf_options(tmp_path, monkeypatch):
+    queue, settings, material_id, folder, dossier, coshh = _fixture(tmp_path, monkeypatch)
+    for kind in ("cv_pdf", "coshh_pdf"):
+        with pytest.raises(ValidationError):
+            BulkExportRequest(entries=[{"material_id": material_id, "kinds": [kind]}])
+
+
+def test_save_all_dialog_shows_sds_and_no_generated_pdf_options():
+    text = web.HTML
+    assert "['sds','Original SDS (PDF)','sds_available',true]" in text
+    assert "Select all SDS" in text
+    assert "['cv_pdf','CV dossier (PDF)'" not in text
+    assert "['coshh_pdf','COSHH form (PDF)'" not in text

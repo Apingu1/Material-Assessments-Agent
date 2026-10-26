@@ -273,9 +273,15 @@ OpenAI research engine.
 the currently filtered queue. Each material can independently include:
 - CV dossier Word (default when available)
 - CV screening form Word
-- CV dossier PDF
 - COSHH assessment Word (default when the current controlled template verifies)
-- COSHH assessment PDF
+- Original SDS PDF (default when available; the exact PDF bytes downloaded or uploaded, not a generated assessment PDF)
+
+Generated CV/COSHH PDF copies are intentionally omitted from **Save All**.
+They remain available through the individual assessment download links.
+SDS export is independent of COSHH document completion: when an original SDS
+was successfully stored, it may be exported even if COSHH generation failed.
+The bulk-export preflight checks the SDS against its saved SHA-256 record to
+protect original-document provenance.
 
 The backend preflights each document against its queue record and physical
 output; current COSHH template verification is mandatory. The export is

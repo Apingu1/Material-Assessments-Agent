@@ -6,27 +6,28 @@ master; an earlier Word revision cannot be silently included in a ZIP.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
-from zipfile import ZipFile, ZIP_DEFLATED
+ from zipfile import ZipFile, ZIP_DEFLATED
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from .coshh_template import verify_generated_coshh_document
 
-ExportKind = Literal["cv_dossier", "cv_form", "cv_pdf", "coshh", "coshh_pdf"]
+# Only Word assessments and the ORIGINAL supplier/reference SDS PDF are
+# relevant to Save All. Generated CV/COSHH PDFs remain available separately.
+ExportKind = Literal["cv_dossier", "cv_form", "coshh", "sds"]
 PATTERNS = {
     "cv_dossier": "*Assessment Dossier - DRAFT.docx",
     "cv_form": "*F01 V02 - DRAFT.docx",
-    "cv_pdf": "*Assessment Dossier - DRAFT.pdf",
     "coshh": "*COSHH Assessment - DRAFT.docx",
-    "coshh_pdf": "*COSHH Assessment - DRAFT.pdf",
+    "sds": "sds/*Safety Data Sheet.pdf",
 }
 CV_COMPLETED = {"READY_FOR_REVIEW", "PDE_REQUIRED", "PDE_RECOMMENDED", "EVIDENCE_GAP"}
 COSHH_COMPLETED = {"READY_FOR_REVIEW", "REVIEW_REQUIRED"}
@@ -34,7 +35,7 @@ COSHH_COMPLETED = {"READY_FOR_REVIEW", "REVIEW_REQUIRED"}
 
 class ExportSelection(BaseModel):
     material_id: int = Field(ge=1)
-    kinds: list[ExportKind] = Field(min_length=1, max_length=5)
+    kinds: list[ExportKind] = Field(min_length=1, max_length=4)
 
     @model_validator(mode="after")
     def unique_kinds(self):
@@ -80,6 +81,39 @@ def _safe_segment(text: str) -> str:
     return safe[:72] or "Material"
 
 
+def _validate_original_sds(output_dir: Path, pdf_path: Path, material_id: int) -> None:
+    """Export only the unchanged, identity-screened SDS captured by the agent.
+
+    SDS may be available even when COSHH generation failed; it is not gated
+    on the COSHH form's template version or successful document generation.
+    """
+    metadata_path = output_dir / "sds" / "SDS_METADATA.json"
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise HTTPException(
+            409, f"Assessment #{material_id}: original SDS provenance metadata is missing or unreadable"
+        ) from exc
+    expected = metadata.get("sha256", "")
+    if metadata.get("status") != "STORED_UNCHANGED" or not expected:
+        raise HTTPException(
+            409, f"Assessment #{material_id}: original SDS has no confirmed stored-original checksum"
+        )
+    try:
+        with pdf_path.open("rb") as handle:
+            header = handle.read(5)
+            digest = hashlib.sha256()
+            digest.update(header)
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        raise HTTPException(409, f"Assessment #{material_id}: original SDS is not readable") from exc
+    if header != b"%PDF-" or digest.hexdigest() != expected:
+        raise HTTPException(
+            409, f"Assessment #{material_id}: original SDS PDF does not match its stored SHA-256"
+        )
+
+
 def resolve_export(request: BulkExportRequest, queue, settings) -> list[ExportFile]:
     root = settings.output_dir.resolve()
     result: list[ExportFile] = []
@@ -102,7 +136,9 @@ def resolve_export(request: BulkExportRequest, queue, settings) -> list[ExportFi
             path = matches[0].resolve()
             if not path.is_relative_to(output_dir):
                 raise HTTPException(403, f"Assessment #{entry.material_id}: invalid output location")
-            if kind.startswith("coshh"):
+            if kind == "sds":
+                _validate_original_sds(output_dir, path, entry.material_id)
+            if kind == "coshh":
                 # Match /api/download's provenance gate so directory saving
                 # can't pass preflight and then fail on each individual GET.
                 status_path = output_dir / "COSHH_STATUS.json"
@@ -110,11 +146,6 @@ def resolve_export(request: BulkExportRequest, queue, settings) -> list[ExportFi
                     status_record = json.loads(status_path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     status_record = {}
-                if kind == "coshh_pdf" and status_record.get("coshh_pdf_current") is False:
-                    raise HTTPException(
-                        409, f"Assessment #{entry.material_id}: COSHH PDF is unavailable "
-                        "after a Word-only refresh. Export its current Word document instead."
-                    )
                 if status_record.get("template_verified") is not True:
                     raise HTTPException(
                         409, f"Assessment #{entry.material_id}: COSHH has no "

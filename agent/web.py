@@ -216,6 +216,7 @@ def queue_rows() -> list[dict]:
         payload["cv_pdf_available"] = False
         payload["coshh_docx_available"] = False
         payload["coshh_pdf_available"] = False
+        payload["sds_available"] = False
         payload["coshh_pdf_warning"] = ""
         payload["worker_active"] = _worker_lock.locked()
         payload["run_needs_status_check"] = (
@@ -265,6 +266,12 @@ def queue_rows() -> list[dict]:
                     payload["coshh_docx_available"]
                     and len(list(folder.glob("*COSHH Assessment - DRAFT.pdf"))) == 1
                     and coshh.get("coshh_pdf_current") is not False
+                )
+                # Original SDS export is independent of COSHH Word completion.
+                payload["sds_available"] = (
+                    payload["sds_status"] == "STORED_UNCHANGED"
+                    and len(list(folder.glob("sds/*Safety Data Sheet.pdf"))) == 1
+                    and (folder / "sds" / "SDS_METADATA.json").is_file()
                 )
         result.append(payload)
     return result
@@ -596,8 +603,8 @@ HTML = r'''<!doctype html>
  <div class="export-dialog">
   <div class="export-heading"><div><strong id="export-title" style="font-size:19px;color:var(--navy)">Save assessment documents</strong><div class="muted">Choose documents for each material in your current filtered list.</div></div><button class="secondary" onclick="closeBulkExport()" aria-label="Close export dialog">Close</button></div>
   <div class="export-content">
-   <div class="export-tip">Save individual Word/PDF files into a folder you choose (supported desktop browsers), or download a ZIP containing separate folders for each material. <strong>No AI credits are used.</strong> Outdated COSHH forms must be refreshed before exporting.</div>
-   <div class="actions" style="margin:0 0 10px"><button class="secondary" onclick="selectExportKind('cv_dossier')">Select all CV dossiers</button><button class="secondary" onclick="selectExportKind('coshh')">Select all COSHH Word</button><button class="secondary" onclick="clearExportSelection()">Clear selection</button></div>
+   <div class="export-tip">Save the selected CV/COSHH Word files and original SDS PDF into a folder you choose (supported desktop browsers), or download a ZIP containing separate folders for each material. Generated assessment PDF copies are excluded. <strong>No AI credits are used.</strong> Outdated COSHH Word forms must be refreshed before exporting.</div>
+   <div class="actions" style="margin:0 0 10px"><button class="secondary" onclick="selectExportKind('cv_dossier')">Select all CV dossiers</button><button class="secondary" onclick="selectExportKind('coshh')">Select all COSHH Word</button><button class="secondary" onclick="selectExportKind('sds')">Select all SDS</button><button class="secondary" onclick="clearExportSelection()">Clear selection</button></div>
    <div id="export-rows"></div>
   </div>
   <div class="export-actions">
@@ -725,9 +732,8 @@ async function refresh(){
 const exportChoices=[
  ['cv_dossier','CV dossier (Word)','cv_dossier_available',true],
  ['cv_form','CV screening form (Word)','cv_form_available',false],
- ['cv_pdf','CV dossier (PDF)','cv_pdf_available',false],
  ['coshh','COSHH form (Word)','coshh_docx_available',true],
- ['coshh_pdf','COSHH form (PDF)','coshh_pdf_available',false]
+ ['sds','Original SDS (PDF)','sds_available',true]
 ];
 function openBulkExport(){
  const rows=filteredAssessments();
