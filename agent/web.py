@@ -26,7 +26,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v10-queue-filters-bulk-export"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v11-coshh-refresh-reliability"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
@@ -62,6 +62,8 @@ def _coshh_payload(output_dir: Path) -> dict:
         "error": "",
         "stage": "",
         "sds_attempt_count": 0,
+        "coshh_pdf_current": None,
+        "coshh_pdf_warning": "",
     }
     path = output_dir / "COSHH_STATUS.json"
     if not path.is_file():
@@ -84,6 +86,8 @@ def _coshh_payload(output_dir: Path) -> dict:
             "error": str(payload.get("error") or ""),
             "stage": str(payload.get("stage") or ""),
             "sds_attempt_count": attempt_count,
+            "coshh_pdf_current": payload.get("coshh_pdf_current"),
+            "coshh_pdf_warning": str(payload.get("coshh_pdf_warning") or ""),
         }
     except (OSError, ValueError, TypeError) as exc:
         return {
@@ -212,6 +216,7 @@ def queue_rows() -> list[dict]:
         payload["cv_pdf_available"] = False
         payload["coshh_docx_available"] = False
         payload["coshh_pdf_available"] = False
+        payload["coshh_pdf_warning"] = ""
         payload["worker_active"] = _worker_lock.locked()
         payload["run_needs_status_check"] = (
             payload.get("status") == "RESEARCHING" and not _worker_lock.locked()
@@ -223,6 +228,7 @@ def queue_rows() -> list[dict]:
             payload["coshh_template"] = coshh.get("template", "")
             payload["coshh_error"] = coshh.get("error", "")
             payload["coshh_stage"] = coshh.get("stage", "")
+            payload["coshh_pdf_warning"] = coshh.get("coshh_pdf_warning", "")
             payload["sds_attempt_count"] = coshh.get("sds_attempt_count", 0)
             if not payload.get("coshh_status"):
                 payload["coshh_status"] = coshh.get("status", "FAILED")
@@ -258,6 +264,7 @@ def queue_rows() -> list[dict]:
                 payload["coshh_pdf_available"] = (
                     payload["coshh_docx_available"]
                     and len(list(folder.glob("*COSHH Assessment - DRAFT.pdf"))) == 1
+                    and coshh.get("coshh_pdf_current") is not False
                 )
         result.append(payload)
     return result
@@ -368,6 +375,8 @@ def refresh_coshh_form(material_id: int) -> dict:
             "refreshed": True,
             "ai_calls": 0,
             "template_verified": status["template_verified"],
+            "pdf_available": status.get("coshh_pdf_current") is True,
+            "pdf_warning": status.get("coshh_pdf_warning", ""),
         }
     finally:
         _worker_lock.release()
@@ -466,6 +475,12 @@ def download(material_id: int, kind: str):
     if kind in {"coshh", "coshh_pdf"}:
         output_dir = _output_dir(material_id)
         status = _coshh_payload(output_dir)
+        if kind == "coshh_pdf" and status.get("coshh_pdf_current") is False:
+            raise HTTPException(
+                status_code=409,
+                detail="Current COSHH Word file is available, but PDF conversion "
+                "was unavailable during refresh. Download the Word document.",
+            )
         if not status["template_verified"]:
             detail = (
                 "COSHH generation failed or has not completed; no verified document "
@@ -635,7 +650,7 @@ async function refreshCoshhForm(id,download=false){
   const response=await fetch('/api/coshh/'+id+'/refresh-form',{method:'POST'});
   const result=await response.json();
   if(!response.ok)throw Error(result.detail||'COSHH form refresh failed');
-  note('Controlled COSHH form updated successfully with zero API calls.');
+  note('Controlled COSHH Word file updated successfully with zero API calls.'+(result.pdf_warning?' '+result.pdf_warning:''));
   await refresh();
   if(download)window.location.href='/api/download/'+id+'/coshh';
  }catch(error){

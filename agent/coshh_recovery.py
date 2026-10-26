@@ -120,6 +120,58 @@ def _existing_sds(output_dir: Path, bundle: ResearchBundle) -> StoredSDS | None:
     )
 
 
+def _stored_sds_for_form_refresh(output_dir: Path) -> StoredSDS:
+    """Check the original archived SDS bytes without starting NEW SDS research.
+
+    A historical assessment may intentionally use a reference SDS named for
+    the parent compound rather than the incoming salt/presentation. The
+    initial generation already recorded identity suitability for review; a
+    formatting-only operation must not reclassify or second-guess that choice.
+    """
+    from zipfile import BadZipFile
+    import fitz
+
+    path = output_dir / "sds" / "SDS_METADATA.json"
+    if not path.is_file():
+        raise ValueError(
+            "The saved SDS provenance record is missing. The COSHH can only be "
+            "refreshed without AI when the original downloaded SDS is retained."
+        )
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError("Saved SDS metadata is unreadable") from exc
+    if metadata.get("status") != "STORED_UNCHANGED":
+        raise ValueError("The original SDS was not marked STORED_UNCHANGED")
+    digest = metadata.get("sha256", "")
+    if not digest:
+        raise ValueError("Original SDS checksum missing: manual provenance check needed")
+    candidates = sorted((output_dir / "sds").glob("*Safety Data Sheet.pdf"))
+    if len(candidates) != 1:
+        raise ValueError("Expected one original SDS PDF in the saved assessment")
+    actual = candidates[0]
+    payload = actual.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != digest:
+        raise ValueError("Original SDS checksum does not match its recorded value")
+    if not payload.startswith(b"%PDF-"):
+        raise ValueError("The saved SDS is not a PDF file")
+    try:
+        with fitz.open(stream=payload, filetype="pdf") as pdf:
+            if pdf.page_count < 1:
+                raise ValueError("The saved SDS PDF has no pages")
+    except Exception as exc:
+        raise ValueError("The archived SDS PDF cannot be opened") from exc
+    return StoredSDS(
+        status="STORED_UNCHANGED",
+        original_url=metadata.get("original_url") or "ARCHIVED_SDS",
+        resolved_pdf_url=metadata.get("resolved_pdf_url") or "ARCHIVED_SDS",
+        local_path=str(actual), sha256=digest,
+        note=metadata.get("note") or "Original SDS preserved unchanged",
+        attempts=metadata.get("attempts") or [],
+        identity_match=metadata.get("identity_match") or "PREVIOUSLY_REVIEWED_REFERENCE",
+    )
+
+
 def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dict:
     """Re-render a completed COSHH from saved data; NEVER invoke an AI client.
 
@@ -140,14 +192,10 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
     assessment = COSHHAssessment.model_validate_json(
         assessment_file.read_text(encoding="utf-8")
     )
-    if assessment.research.hazard_statements == []:
-        raise ValueError(
-            "The saved COSHH has no classified hazard statements: pictograms "
-            "cannot safely be reconstructed without checking the actual SDS."
-        )
-    stored = _existing_sds(output_dir, bundle)
-    if stored is None or stored.status != "STORED_UNCHANGED":
-        raise ValueError("A stored, identity-matched original SDS PDF is required")
+    # No new hazard classification or substance matching is performed during
+    # a purely documentary refresh. SDS with no applicable classified hazards
+    # is a valid possible state; we reuse the saved assessment as it stands.
+    stored = _stored_sds_for_form_refresh(output_dir)
 
     existing = sorted(output_dir.glob("*COSHH Assessment - DRAFT.docx"))
     if len(existing) != 1:
@@ -176,17 +224,42 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
             staged_docx, settings.coshh_template_path
         )
         staged_pdf = None
+        pdf_warning = ""
         if settings.generate_pdf:
-            convert_docx_to_pdf(staged_docx, staging)
-            staged_pdf = staged_docx.with_suffix(".pdf")
-            if not staged_pdf.exists():
-                raise RuntimeError("No PDF was produced from the refreshed COSHH")
+            try:
+                converted = convert_docx_to_pdf(staged_docx, staging)
+                if converted and converted.is_file():
+                    staged_pdf = converted
+                else:
+                    pdf_warning = (
+                        "Word refreshed and verified. PDF conversion is unavailable "
+                        "on this Codespace; the old PDF is retained in the superseded "
+                        "archive, not offered as the current form."
+                    )
+            except Exception as exc:
+                pdf_warning = (
+                    f"Word refreshed and verified, but PDF conversion failed: "
+                    f"{type(exc).__name__}. The older PDF is not offered as current."
+                )
 
-        # No changes to the research JSON or SDS PDF. Replace the Word file
-        # after successful verification; old COSHH retained if preflight fails.
+        # Preserve previous drafts for inspection traceability before
+        # replacing their Word/PDF files. No changes to SDS/research JSON.
+        history = output_dir / ".coshh-superseded" / (
+            datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]
+        )
+        history.mkdir(parents=True)
+        shutil.copy2(existing[0], history / existing[0].name)
+        old_pdf = existing[0].with_suffix(".pdf")
+        if old_pdf.is_file():
+            shutil.copy2(old_pdf, history / old_pdf.name)
+
         staged_docx.replace(existing[0])
         if staged_pdf is not None:
-            staged_pdf.replace(existing[0].with_suffix(".pdf"))
+            staged_pdf.replace(old_pdf)
+        else:
+            # Prevent accidentally exporting a stale PDF linked to the
+            # previous master when only Word conversion succeeded.
+            old_pdf.unlink(missing_ok=True)
 
         status = {
             **old_status,
@@ -196,6 +269,8 @@ def refresh_existing_coshh_document(settings: Settings, output_dir: Path) -> dic
             "stage": "CONTROLLED_FORM_REFRESHED_NO_AI",
             "document_refreshed_at": datetime.now(timezone.utc).isoformat(),
             "document_refresh_ai_calls": 0,
+            "coshh_pdf_current": staged_pdf is not None,
+            "coshh_pdf_warning": pdf_warning,
             "assessment_reference": assessment_reference,
             "assessment_version": "1",
             "completion_date": completed_on.isoformat(),
