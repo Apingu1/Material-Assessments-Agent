@@ -65,6 +65,7 @@ class MaterialQueue:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     material_name TEXT NOT NULL,
                     dosage_forms TEXT NOT NULL DEFAULT '',
+                    starting_form TEXT NOT NULL DEFAULT 'UNSPECIFIED',
                     routes TEXT NOT NULL DEFAULT '',
                     product_context TEXT NOT NULL DEFAULT '',
                     coshh_areas TEXT NOT NULL DEFAULT 'GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION',
@@ -85,6 +86,7 @@ class MaterialQueue:
             )
             columns = {row[1] for row in conn.execute("PRAGMA table_info(materials)")}
             additions = {
+                "starting_form": "TEXT NOT NULL DEFAULT 'UNSPECIFIED'",
                 "coshh_areas": "TEXT NOT NULL DEFAULT 'GOODS_IN_WAREHOUSE,SAMPLING,QC,PRODUCTION'",
                 "people_exposed": "TEXT NOT NULL DEFAULT ''",
                 "typical_quantity": "TEXT NOT NULL DEFAULT ''",
@@ -105,15 +107,16 @@ class MaterialQueue:
             cur = conn.execute(
                 """
                 INSERT INTO materials
-                    (material_name, dosage_forms, routes, product_context,
+                    (material_name, dosage_forms, starting_form, routes, product_context,
                      coshh_areas, people_exposed, typical_quantity, existing_controls,
                      frequency, duration, status, cleaning_status, coshh_status,
                      created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', 'PENDING', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', 'PENDING', ?, ?)
                 """,
                 (
                     item.material_name,
                     item.dosage_forms,
+                    item.starting_form.value,
                     item.routes,
                     item.product_context,
                     _area_text(item.coshh_areas),
@@ -143,6 +146,7 @@ class MaterialQueue:
                     MaterialInput(
                         material_name=name,
                         dosage_forms=(row.get("dosage_forms") or "").strip(),
+                        starting_form=(row.get("starting_form") or "UNSPECIFIED").strip().upper(),
                         routes=(row.get("routes") or "").strip(),
                         product_context=(row.get("product_context") or "").strip(),
                         coshh_areas=_parse_areas((row.get("coshh_areas") or "").strip()),
@@ -173,6 +177,7 @@ class MaterialQueue:
             return int(row["id"]), MaterialInput(
                 material_name=row["material_name"],
                 dosage_forms=row["dosage_forms"],
+                starting_form=row["starting_form"],
                 routes=row["routes"],
                 product_context=row["product_context"],
                 coshh_areas=_parse_areas(row["coshh_areas"]),

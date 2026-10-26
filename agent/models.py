@@ -54,6 +54,16 @@ class COSHHArea(str, Enum):
     OFFICE = "OFFICE"
 
 
+class StartingForm(str, Enum):
+    """Incoming physical material; independent of finished dosage form."""
+    UNSPECIFIED = "UNSPECIFIED"
+    TABLETS = "TABLETS"
+    POWDER = "POWDER"
+    GRANULES = "GRANULES"
+    LIQUID = "LIQUID"
+    OTHER = "OTHER"
+
+
 class RiskBand(str, Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
@@ -311,6 +321,7 @@ _DEFAULT_COSHH_AREAS = [
 class MaterialInput(StrictModel):
     material_name: str = Field(min_length=1, max_length=55)
     dosage_forms: str = Field(default="", max_length=55)
+    starting_form: StartingForm = StartingForm.UNSPECIFIED
     routes: str = Field(default="", max_length=55)
     product_context: str = ""
     coshh_areas: list[COSHHArea] = Field(default_factory=lambda: list(_DEFAULT_COSHH_AREAS))
