@@ -13,7 +13,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
- from zipfile import ZipFile, ZIP_DEFLATED
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, model_validator
