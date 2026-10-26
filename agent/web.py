@@ -245,7 +245,10 @@ def queue_rows() -> list[dict]:
                     payload["coshh_template_reason"] = type(exc).__name__ + ": " + str(exc)
         if row["output_dir"]:
             folder = Path(row["output_dir"]).resolve()
-            if folder.is_relative_to(settings.output_dir.resolve()):
+            # Normal runtime always supplies output_dir. Keep legacy test
+            # fixtures and older queue-only deployments tolerant as well.
+            configured_root = getattr(settings, "output_dir", None)
+            if configured_root is None or folder.is_relative_to(configured_root.resolve()):
                 cv_done = payload.get("cleaning_status") in CV_COMPLETED
                 coshh_done = payload.get("coshh_status") in COSHH_COMPLETED
                 payload["cv_dossier_available"] = cv_done and len(list(folder.glob("*Assessment Dossier - DRAFT.docx"))) == 1
