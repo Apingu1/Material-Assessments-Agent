@@ -654,8 +654,13 @@ async function refreshCoshhForm(id,download=false){
   await refresh();
   if(download)window.location.href='/api/download/'+id+'/coshh';
  }catch(error){
-  note('Unable to update COSHH without AI: '+error.message);
+  const detail='Assessment #'+id+' could not update its COSHH form. '+
+     error.message+' No additional AI run was started.';
+  note(detail);
   await refresh();
+  // The ordinary notice is above the long queue and may be off-screen.
+  // A browser message makes the precise HTTP 409 reason visible immediately.
+  window.alert(detail);
  }
 }
 async function retryCoshh(id){

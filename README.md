@@ -138,6 +138,24 @@ An attempted download without updating returns a specific compatibility
 message naming missing/deprecated field tags. The original assessment and
 SDS are never overwritten as part of this refresh.
 
+### Document-only COSHH refresh reliability
+
+For existing completed COSHH records, `Refresh form (no AI)` now verifies
+the saved original SDS bytes against their recorded SHA-256 **without
+re-performing the original SDS name/identity search**. A reference SDS
+associated with an incoming salt/presentation is therefore not incorrectly
+rejected simply because its first-page name differs. Neither the SDS nor
+the existing JSON research is changed.
+
+The replacement Word DOCX is created and verified against the current master
+even if an optional LibreOffice PDF conversion is unavailable. The previous
+Word/PDF drafts are retained in a timestamped `.coshh-superseded/` archive.
+When no current PDF can be created, the old PDF is removed from active
+downloads and excluded from bulk export; the new Word document remains
+available. Refresh failures now display the actual HTTP response detail in
+the browser rather than only the `409 Conflict` server log. No OpenAI
+or new SDS research calls occur in this workflow.
+
 ### No-credit refresh of an existing COSHH document
 
 After code updates, a completed assessment's saved `coshh_assessment.json`

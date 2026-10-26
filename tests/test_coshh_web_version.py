@@ -154,3 +154,9 @@ def test_download_reports_actionable_mismatch_instead_of_generic_134(tmp_path,mo
         web.download(18,"coshh")
     assert exc.value.status_code==409
     assert "earlier master" in exc.value.detail
+
+
+def test_refresh_error_explained_in_browser_ui():
+    assert "window.alert(detail)" in web.HTML
+    assert "No additional AI run was started." in web.HTML
+    assert "Unable to update COSHH without AI" not in web.HTML
