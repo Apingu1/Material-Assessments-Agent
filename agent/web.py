@@ -714,7 +714,7 @@ function renderQueue(){
  document.getElementById('queue-results').textContent=data.length+' of '+queueCache.length+' assessments displayed';
  document.getElementById('rows').innerHTML=data.map(x=>{
    const warning=x.run_needs_status_check?'<div class="error">Previously marked RESEARCHING; no web worker currently detected. Check the saved record before starting another paid run.</div>':'';
-   return `<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">${esc(x.coshh_areas||'')}</span>${warning}</td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`;
+   return `<tr><td>${x.id}</td><td><div class="output-title">${esc(x.material_name)}</div><span class="muted">Starting form: ${esc(x.starting_form||'UNSPECIFIED')} · Areas: ${esc(x.coshh_areas||'')}</span>${warning}</td><td>${cleaning(x)}</td><td>${coshh(x)}</td><td class="error">${esc(x.error||'')}</td></tr>`;
  }).join('')||'<tr><td colspan="5" class="muted">No assessments match this filter.</td></tr>';
 }
 async function refresh(){
