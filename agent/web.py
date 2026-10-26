@@ -26,7 +26,7 @@ from .models import MaterialInput
 from .pipeline import AssessmentPipeline
 from .queue import MaterialQueue
 
-COSHH_ENGINE_BUILD = "2026-10-26-controlled-v11-coshh-refresh-reliability"
+COSHH_ENGINE_BUILD = "2026-10-26-controlled-v12-responsible-person-pagination"
 app = FastAPI(title="Material Assessment Agent")
 _worker_lock = threading.Lock()
 
