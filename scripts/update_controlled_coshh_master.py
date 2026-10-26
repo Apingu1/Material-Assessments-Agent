@@ -27,21 +27,44 @@ def update_template(path: Path = TARGET) -> bool:
         contents = {name: source.read(name) for name in source.namelist()}
         metadata = source.infolist()
     updated_sha = hashlib.sha256(contents["word/document.xml"]).hexdigest()
-    if updated_sha == patch["target_document_sha256"]:
-        return False
-    actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
-    if actual_sha != patch["source_sha256"]:
-        raise ValueError(
-            "COSHH master template changed unexpectedly. Refusing to apply "
-            "the historical delta to an unrecognised controlled document."
+    if updated_sha != patch["target_document_sha256"]:
+        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_sha != patch["source_sha256"]:
+            raise ValueError(
+                "COSHH master template changed unexpectedly. Refusing to apply "
+                "the historical delta to an unrecognised controlled document."
+            )
+        for name, edits in patch["parts"].items():
+            tokens = re.split(r"(<[^>]*>)", contents[name].decode("utf-8"))
+            for i, j, replacement in reversed(edits):
+                tokens[i:j] = [replacement]
+            contents[name] = "".join(tokens).encode("utf-8")
+        if hashlib.sha256(contents["word/document.xml"]).hexdigest() != patch["target_document_sha256"]:
+            raise ValueError("Rebuilt controlled COSHH template failed integrity verification")
+
+    # Pagination refinement: keep all four green first-aid rows together.
+    # Without keepNext on both cells of the first three rows, Word may strand
+    # only the Ingestion first-aid row on page 2 for longer SDS hazard lists.
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    n = {"w": W}
+    root = etree.fromstring(contents["word/document.xml"])
+    table = root.xpath("./w:body/w:tbl", namespaces=n)[3]
+    changed = False
+    for row in table.xpath("./w:tr", namespaces=n)[:3]:
+        for paragraph in row.xpath("./w:tc/w:p", namespaces=n):
+            ppr = paragraph.find(f"{{{W}}}pPr")
+            if ppr is None:
+                ppr = etree.Element(f"{{{W}}}pPr")
+                paragraph.insert(0, ppr)
+            if ppr.find(f"{{{W}}}keepNext") is None:
+                ppr.insert(0, etree.Element(f"{{{W}}}keepNext"))
+                changed = True
+    if changed:
+        contents["word/document.xml"] = etree.tostring(
+            root, xml_declaration=True, encoding="UTF-8", standalone="yes"
         )
-    for name, edits in patch["parts"].items():
-        tokens = re.split(r"(<[^>]*>)", contents[name].decode("utf-8"))
-        for i, j, replacement in reversed(edits):
-            tokens[i:j] = [replacement]
-        contents[name] = "".join(tokens).encode("utf-8")
-    if hashlib.sha256(contents["word/document.xml"]).hexdigest() != patch["target_document_sha256"]:
-        raise ValueError("Rebuilt controlled COSHH template failed integrity verification")
+    elif updated_sha == patch["target_document_sha256"]:
+        return False
     n = {"w":"http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     root = etree.fromstring(contents["word/document.xml"])
     tags = root.xpath(".//w:sdt/w:sdtPr/w:tag/@w:val", namespaces=n)

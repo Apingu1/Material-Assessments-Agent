@@ -134,6 +134,7 @@ def test_completed_coshh_can_refresh_hazards_and_ppe_at_zero_ai_cost(tmp_path, m
     template = Path(__file__).resolve().parents[1] / "templates" / "ES.SOP.089.F01.V01 - COSHH Assessment.docx"
     settings = SimpleNamespace(
         require_runtime=lambda:None, generate_pdf=False, coshh_template_path=template,
+        database_path=tmp_path / "agent.db",
     )
     outcome = coshh_recovery.refresh_existing_coshh_document(settings,tmp_path)
     assert outcome["document_refresh_ai_calls"] == 0

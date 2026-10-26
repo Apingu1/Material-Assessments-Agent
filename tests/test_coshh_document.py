@@ -108,6 +108,14 @@ def test_coshh_document_is_generated_with_blank_human_approval(tmp_path: Path):
     assert values["DER_PPE_QC_FUME_HOOD"] is True
     assert values["DER_PPE_QC_FULL_FACE_RESPIRATOR"] is False
     assert values["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"] is True
+    assert values["DER_PPE_PRODUCTION_LABCOAT_GOWNS"] is True
+    assert values["DER_PPE_PRODUCTION_GLASSES_GOGGLES"] is True
+    assert values["DER_PPE_PRODUCTION_OVERSHOES"] is True
+    assert values["DER_PPE_PRODUCTION_SURGICAL_MASK"] is False
+    assert values["DER_PPE_RND_FULL_FACE_RESPIRATOR"] is True
+    assert values["DER_FIRE_NA"] is True
+    assert values["USR_ASSESSMENT_VERSION"] == "1"
+    assert values["HUM_NEXT_REVIEW_DATE"] != ""
     assert values["HUM_ASSESSED_NAME_POSITION"] == ""
     assert values["HUM_REVIEWED_SIGNATURE"] == ""
     assert values["HUM_APPROVED_DATE"] == ""
@@ -192,6 +200,7 @@ def test_coshh_only_rebuild_populates_exact_controlled_template_offline(tmp_path
         require_runtime=lambda: None,
         coshh_template_path=Path(__file__).resolve().parents[1] / "templates" /
             "ES.SOP.089.F01.V01 - COSHH Assessment.docx",
+        database_path=tmp_path / "agent.db",
         generate_pdf=False,
     )
     result = coshh_recovery.regenerate_coshh_only(settings, tmp_path)
@@ -288,7 +297,7 @@ def test_all_80_checkbox_controls_preserve_original_font_sizes_and_styles(tmp_pa
         return checks
 
     before, after = checkboxes(template), checkboxes(output)
-    assert len(before) == len(after) == 80
+    assert len(before) == len(after) == 81
     assert before.keys() == after.keys()
     for tag in before:
         assert before[tag]["styles"] == after[tag]["styles"], tag
@@ -299,3 +308,72 @@ def test_all_80_checkbox_controls_preserve_original_font_sizes_and_styles(tmp_pa
     assert after["SDS_PICTOGRAM_GHS07"]["glyph"] == ["☒"]
     assert after["SDS_PICTOGRAM_GHS07"]["checked"] == ["1"]
     assert after["DER_PPE_RND_NITRILE_GLOVES"]["glyph"] == ["☐"]
+
+
+def test_site_wide_ppe_rules_without_model_selected_ppe():
+    """Site PPE must apply even when an SDS/model does not explicitly list it."""
+    import copy
+    from agent.coshh_template import build_coshh_template_values
+    research = copy.deepcopy(_research())
+    item = MaterialInput(
+        material_name="Dihydrocodeine powder",
+        coshh_areas=list(COSHHArea),
+        people_exposed="Warehouse, Office, Production, QC, R&D",
+    )
+    assessment = build_coshh_assessment(item,research)
+    for activity in assessment.activities:
+        activity.ppe = []
+        activity.controls = []
+    stored = StoredSDS(
+        status="STORED_UNCHANGED",original_url="",resolved_pdf_url="",
+        local_path="",sha256="",note="",
+    )
+    v = build_coshh_template_values(assessment,item,stored)
+    for area in ("PRODUCTION","RND","QC","SPILLAGE"):
+        for gear in ("LABCOAT_GOWNS","GLASSES_GOGGLES","NITRILE_GLOVES"):
+            assert v[f"DER_PPE_{area}_{gear}"],f"{area} missing {gear}"
+    assert v["DER_PPE_PRODUCTION_OVERSHOES"]
+    assert v["DER_PPE_PRODUCTION_SURGICAL_MASK"]
+    assert v["DER_PPE_OFFICE_WAREHOUSE_NITRILE_GLOVES"] is False
+    assert v["DER_PPE_QC_FULL_FACE_RESPIRATOR"] is False
+
+
+def test_production_rpe_is_shared_with_rnd_but_qc_uses_fume_hood():
+    import copy
+    research = copy.deepcopy(_research())
+    item = MaterialInput(material_name="Test API",coshh_areas=list(COSHHArea))
+    assessment = build_coshh_assessment(item,research)
+    for activity in assessment.activities:
+        if activity.area == COSHHArea.PRODUCTION:
+            activity.ppe.append("Full-face respirator with appropriate filters")
+    stored = StoredSDS(status="STORED_UNCHANGED",original_url="",resolved_pdf_url="",local_path="",sha256="",note="")
+    v = build_coshh_template_values(assessment,item,stored)
+    assert v["DER_PPE_PRODUCTION_FULL_FACE_RESPIRATOR"]
+    assert v["DER_PPE_RND_FULL_FACE_RESPIRATOR"]
+    assert v["DER_PPE_QC_FUME_HOOD"]
+    assert not v["DER_PPE_PRODUCTION_SURGICAL_MASK"]
+    assert not v["DER_PPE_RND_SURGICAL_MASK"]
+    assert not v["DER_PPE_QC_FULL_FACE_RESPIRATOR"]
+
+
+def test_coshh_fire_none_checkbox_and_auto_dates():
+    from datetime import date
+    import copy
+    research=copy.deepcopy(_research())
+    research.firefighting_media="Use methods appropriate for surroundings."
+    item=MaterialInput(material_name="Test API")
+    assessment=build_coshh_assessment(item,research)
+    stored=StoredSDS(status="STORED_UNCHANGED",original_url="",resolved_pdf_url="",local_path="",sha256="",note="")
+    v=build_coshh_template_values(
+        assessment,item,stored,reference="ES.COSHH.001",completion_date=date(2026,10,26)
+    )
+    assert v["DER_FIRE_NA"] is True
+    assert not v["DER_FIRE_CO2"] and not v["DER_FIRE_FOAM"]
+    assert v["USR_ASSESSMENT_REFERENCE"]=="ES.COSHH.001"
+    assert v["USR_ASSESSMENT_VERSION"]=="1"
+    assert v["DER_ASSESSMENT_DATE"]=="26OCT26"
+    assert v["HUM_NEXT_REVIEW_DATE"]=="26OCT31"
+    research.firefighting_media="Use carbon dioxide (CO2) or foam."
+    v=build_coshh_template_values(assessment,item,stored)
+    assert v["DER_FIRE_CO2"] and v["DER_FIRE_FOAM"]
+    assert v["DER_FIRE_NA"] is False
